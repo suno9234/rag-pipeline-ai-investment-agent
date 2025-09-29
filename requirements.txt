@@ -1,0 +1,29 @@
+# === LangChain & LangGraph ===
+langchain>=0.2.0
+langchain-core>=0.2.0
+langgraph>=0.1.0
+langchain-community>=0.2.0
+
+# === OpenAI API (LLM/Embedding) ===
+openai>=1.30.0
+
+# === VectorDB / Embedding Search ===
+faiss-cpu>=1.8.0     
+# chromadb>=0.5.0
+
+# === Documents ===
+pypdf>=4.0.0
+python-docx>=1.0.0
+unstructured>=0.13.0
+tiktoken>=0.7.0      
+
+# === Data ===
+numpy>=1.26.0
+pandas>=2.2.0
+
+# === Web ===
+fastapi>=0.111.0
+uvicorn[standard]>=0.30.0
+
+# === import ===
+python-dotenv>=1.0.1
