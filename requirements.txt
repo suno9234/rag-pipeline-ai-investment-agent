@@ -5,6 +5,7 @@ langgraph>=0.1.0
 langchain-community>=0.2.0
 
 # === OpenAI API (LLM/Embedding) ===
+langchain-openai
 openai>=1.30.0
 
 # === VectorDB / Embedding Search ===
@@ -37,5 +38,4 @@ python-dateutil==2.9.0.post0
 tenacity==9.0.0
 
 # pip install playwright 
-# pip -m install playwright
 # playwright install
