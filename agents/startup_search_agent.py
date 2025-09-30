@@ -10,8 +10,8 @@ from state import State
 
 # ── 1) 크롤링 툴 ────────────────────────────────────────────────────────────────
 from tools.nextunicorn import (
-    nextunicorn_list,                    # ✅ 리스트만
-    nextunicorn_company_details_batch,   # ✅ 필요 URL만 상세
+    nextunicorn_list,  # ✅ 리스트만
+    nextunicorn_company_details_batch,  # ✅ 필요 URL만 상세
 )
 
 # ── 2) 벡터 스토어 / 저장 레이어 ─────────────────────────────────────────────
@@ -29,41 +29,45 @@ from langchain_core.prompts import ChatPromptTemplate
 _llm = ChatOpenAI(model="gpt-4o-mini", temperature=0.2)
 
 # 한 번에 처리: cleaned 섹션 + tags 생성 (tags는 상위 레벨 배열로 통일)
-_COMBINED_PROMPT = ChatPromptTemplate.from_messages(
-    [
-        (
-            "system",
-            "너는 벤처캐피탈 애널리스트다. 입력으로 제공되는 '회사 원문 텍스트(raw_text)'만을 기반으로 "
-            "아래 두 출력을 동시에 생성하라. 섹션 제목이 없어도 원문 전체에서 의미 단위로 추출하라.\n\n"
-            "[출력 스키마]\n"
-            "{\n"
-            '  "cleaned": {\n'
-            '    "summary": "...",\n'
-            '    "services": "...",\n'
-            '    "team": "...",\n'
-            '    "funding": "...",\n'
-            '    "news": "...",\n'
-            '    "info": "...",\n'
-            '    "company": "..."\n'
-            "  },\n"
-            '  "tags": ["태그1","태그2","태그3"]\n'
-            "}\n\n"
-            "[정리 규칙]\n"
-            "1) cleaned 7키는 항상 포함.\n"
-            "2) 해시태그/URL/광고·이벤트/내비게이션 제거, 중복 제거, 3+개행→1, 간단 맞춤법 보정.\n"
-            "3) 각 섹션 최대 800자, 과장은 줄이고 사실 위주. 근거 없으면 빈 문자열(\"\").\n"
-            "4) funding은 문서 어디에 있어도(소개/뉴스 등) 시리즈/라운드/누적 투자/투자 금액/투자자 신호를 모아 요약.\n\n"
-            "[태그 규칙]\n"
-            "한국어 2~4어절, 최대 3개. 핵심 비즈니스/가치/도메인 드러내기.\n\n"
-            "[출력 형식]\n"
-            "위 JSON만 출력(코드펜스 금지).",
-        ),
-        (
-            "user",
-            "회사명: {name}\n힌트(선택): {hint}\n\n원문 텍스트(raw_text):\n{raw_text}",
-        ),
-    ]
-)
+# ── 3) LLM (섹션 정리 + 태그 동시 생성)
+from langchain_openai import ChatOpenAI
+from langchain_core.prompts import ChatPromptTemplate
+
+_llm = ChatOpenAI(model="gpt-4o-mini", temperature=0.2)
+
+_COMBINED_PROMPT = ChatPromptTemplate.from_messages([
+    (
+        "system",
+        "너는 벤처캐피탈 애널리스트다. 입력으로 제공되는 '회사 원문 텍스트(raw_text)'만을 기반으로 "
+        "아래 두 출력을 동시에 생성하라. 섹션 제목이 없어도 원문 전체에서 의미 단위로 추출하라.\n\n"
+        "[출력 스키마]\n"
+        "{{\n"
+        '  "cleaned": {{\n'
+        '    "summary": "...",\n'
+        '    "services": "...",\n'
+        '    "team": "...",\n'
+        '    "funding": "...",\n'
+        '    "news": "...",\n'
+        '    "info": "...",\n'
+        '    "company": "..."\n'
+        "  }},\n"
+        '  "tags": ["태그1","태그2","태그3"]\n'
+        "}}\n\n"
+        "[정리 규칙]\n"
+        "1) cleaned 7키는 항상 포함.\n"
+        "2) 해시태그/URL/광고·이벤트/내비게이션 제거, 중복 제거, 3+개행→1, 간단 맞춤법 보정.\n"
+        "3) 각 섹션 최대 800자, 과장은 줄이고 사실 위주. 근거 없으면 빈 문자열(\"\").\n"
+        "4) funding은 문서 어디에 있어도(소개/뉴스 등) 시리즈/라운드/누적 투자/투자 금액/투자자 신호를 모아 요약.\n\n"
+        "[태그 규칙]\n"
+        "한국어 2~4어절, 최대 3개. 핵심 비즈니스/가치/도메인 드러내기.\n\n"
+        "[출력 형식]\n"
+        "위 JSON만 출력(코드펜스 금지)."
+    ),
+    (
+        "user",
+        "회사명: {name}\n힌트(선택): {hint}\n\n원문 텍스트(raw_text):\n{raw_text}"
+    ),
+])
 
 # ── 5) 내부 유틸 ──────────────────────────────────────────────────────────────
 def _parse_limit_from_text(text: Optional[str], default: int = 2) -> int:
@@ -75,6 +79,7 @@ def _parse_limit_from_text(text: Optional[str], default: int = 2) -> int:
     v = int(m.group(1))
     return max(1, v)
 
+
 def _normalize_all_tab(url: Optional[str]) -> str:
     if not url:
         return ""
@@ -83,22 +88,26 @@ def _normalize_all_tab(url: Optional[str]) -> str:
     sep = "&" if "?" in url else "?"
     return f"{url}{sep}tab=all"
 
+
 def _local_tidy(s: str) -> str:
     """LLM 실패 대비 로컬 정리기(최소 방어)."""
     if not s:
         return ""
     s = re.sub(r"https?://\S+", " ", s)  # URL 제거
-    s = re.sub(r"#\S+", " ", s)          # 해시태그 제거
-    s = re.sub(r"\s{2,}", " ", s)        # 다중 공백 1개로
-    s = re.sub(r"\n{3,}", "\n", s)       # 3개 이상 개행 1개로
+    s = re.sub(r"#\S+", " ", s)  # 해시태그 제거
+    s = re.sub(r"\s{2,}", " ", s)  # 다중 공백 1개로
+    s = re.sub(r"\n{3,}", "\n", s)  # 3개 이상 개행 1개로
     return s.strip()[:1000]
+
 
 def _log(emit: bool, *args):
     if emit:
         print(*args)
 
+
 # ── 6) LLM: 정리+태깅 통합 호출 ──────────────────────────────────────────────
 _JSON_FENCE = re.compile(r"```(?:json)?\s*(\{.*?\})\s*```", re.S)
+
 
 def _clean_and_tag_via_llm(
     name: str,
@@ -117,7 +126,9 @@ def _clean_and_tag_via_llm(
             raw_text=raw_text,
         )
         out = _llm.invoke(msgs).content or ""
-        _log(emit, "[llm] combined: raw output:", (out[:240].replace("\n", " ") + " ..."))
+        _log(
+            emit, "[llm] combined: raw output:", (out[:240].replace("\n", " ") + " ...")
+        )
 
         # 코드펜스에 감싸오는 경우 대비
         m = _JSON_FENCE.search(out)
@@ -153,9 +164,13 @@ def _clean_and_tag_via_llm(
                         tags.append(tt)
                 tags = tags[:3]
 
-        _log(emit, "[llm] combined: done; lens:",
-             {k: len(cleaned.get(k, "")) for k in cleaned},
-             "tags:", tags)
+        _log(
+            emit,
+            "[llm] combined: done; lens:",
+            {k: len(cleaned.get(k, "")) for k in cleaned},
+            "tags:",
+            tags,
+        )
         return cleaned, tags
 
     except Exception as e:
@@ -163,13 +178,35 @@ def _clean_and_tag_via_llm(
         traceback.print_exc()
         # 폴백: 전부 빈칸
         return (
-            {k: "" for k in ["summary", "services", "team", "funding", "news", "info", "company"]},
+            {
+                k: ""
+                for k in [
+                    "summary",
+                    "services",
+                    "team",
+                    "funding",
+                    "news",
+                    "info",
+                    "company",
+                ]
+            },
             [],
         )
 
+
 # ── 7) 메인 에이전트 ──────────────────────────────────────────────────────────
 def startup_search_agent(state: State) -> State:
-    # 1) 입력파싱
+    """
+    1) NextUnicorn 리스트만 먼저 수집
+    2) VDB(Chroma)에서 회사명 존재 여부 확인
+       - 하나라도 이미 있으면: 즉시 종료(최신 우선 정책)
+       - 없으면: 해당 항목만 상세 본문 수집 → LLM 정리/태깅 → 업서트
+    3) selected_companies 를 최대 10개로 채워 다음 노드가 사용할 수 있게 함
+       - 이번에 업서트된 회사명이 있으면 그것들로
+       - 없으면 기존 VDB에서 랜덤 10개 샘플링
+    4) state 에 변경분만 덮어써서 반환
+    """
+    # 0) 입력 파싱 및 로깅 설정
     limit: int = state.get("limit") or _parse_limit_from_text(
         state.get("input_text"), default=2
     )
@@ -184,11 +221,14 @@ def startup_search_agent(state: State) -> State:
     items: List[Dict[str, Any]] = []
     details: List[Dict[str, Any]] = []
     errors: List[str] = list(state.get("errors", []))
+    created_names: List[str] = []  # ← 업서트 성공한 회사명 모음
 
-    # 2) (변경) 리스트만 먼저 수집
+    # 1) (변경) 리스트만 먼저 수집
     try:
         _log(emit_raw, "[crawl] list: nextunicorn_list start")
-        items = __import__("asyncio").run(nextunicorn_list(limit=limit, headless=headless))
+        items = __import__("asyncio").run(
+            nextunicorn_list(limit=limit, headless=headless)
+        )
         _log(emit_raw, "[crawl] list: done; items=", len(items))
     except Exception as e:
         errors.append(str(e))
@@ -198,8 +238,9 @@ def startup_search_agent(state: State) -> State:
     if emit_raw:
         print(json.dumps({"items": items, "errors": errors}, ensure_ascii=False, indent=2))
 
-    # 3) 크로마: 존재여부 먼저 검사 → 존재하면 즉시 종료(break)
+    # 2) 크로마: 존재여부 먼저 검사 → 존재하면 즉시 종료(break)
     pending: List[Dict[str, Any]] = []
+    vectordb = None
     try:
         vectordb = get_vector_store()
         try:
@@ -212,6 +253,7 @@ def startup_search_agent(state: State) -> State:
             name = (it.get("title") or "").strip()
             url = it.get("url") or ""
             _log(emit_raw, f"[loop:{idx}] name={name} url={url}")
+
             if not name:
                 _log(emit_raw, f"[loop:{idx}] skip: empty name")
                 continue
@@ -221,52 +263,37 @@ def startup_search_agent(state: State) -> State:
                 vectordb, company_name=name, k=3, score_threshold=0.18
             )
             _log(emit_raw, f"[loop:{idx}] find_company_exact_or_similar → found_id={found_id}")
+
             if found_id:
-                # ✅ 정책: 하나라도 이미 있으면 즉시 중단
+                # 정책: 하나라도 이미 있으면 즉시 종료(최신 우선)
                 _log(emit_raw, f"[loop:{idx}] exists → break (최신 우선 정책)")
                 if emit_raw:
-                    print(json.dumps(
-                        {"chroma_created": [], "chroma_skipped": [{"name": name, "id": found_id, "reason": "exists"}]},
-                        ensure_ascii=False, indent=2
-                    ))
-                try:
-                    vectordb = get_vector_store()
-                    chosen: List[str] = []
+                    print(
+                        json.dumps(
+                            {
+                                "chroma_created": [],
+                                "chroma_skipped": [
+                                    {"name": name, "id": found_id, "reason": "exists"}
+                                ],
+                            },
+                            ensure_ascii=False,
+                            indent=2,
+                        )
+                    )
+                new_state = dict(state)
+                new_state.update(
+                    {
+                        "limit": limit,
+                        "headless": headless,
+                        "emit_raw": emit_raw,
+                        "items": items,
+                        "details": details,
+                        "errors": errors,
+                    }
+                )
+                return new_state
 
-                    # 이번 실행에서 생성한 기업 우선
-                    seen = set()
-                    for nm in created_names:
-                        if nm and nm not in seen:
-                            chosen.append(nm); seen.add(nm)
-                            if len(chosen) >= 10:
-                                break
-
-                    # 10개가 안 되면 DB에서 샘플 보충
-                    if len(chosen) < 10:
-                        add = _sample_existing_companies(vectordb, n=10 - len(chosen))
-                        for nm in add:
-                            if nm and nm not in seen:
-                                chosen.append(nm); seen.add(nm)
-                                if len(chosen) >= 10:
-                                    break
-
-                    # state에 세팅 (기존 값이 있으면 덮어쓰기)
-                    state["selected_companies"] = chosen
-                except Exception as e:
-                    errors.append(f"[postselect] {e}")
-                    _log(emit_raw, "[postselect] ERROR:", e)
-                    traceback.print_exc()    
-
-                # 5) 반환
-                state.update({
-                    "limit": limit,
-                    "headless": headless,
-                    "emit_raw": emit_raw,
-                    "items": items,
-                    "details": details,
-                    "errors": errors,
-                })
-
+            # 존재하지 않으면 상세 수집 대상에 추가
             pending.append({"title": name, "url": url})
 
     except Exception as e:
@@ -274,7 +301,7 @@ def startup_search_agent(state: State) -> State:
         _log(emit_raw, "[chroma] BLOCK ERROR:", e)
         traceback.print_exc()
 
-    # 4) (존재하지 않는 것만) 상세 본문 수집 → LLM 정리/태깅 → 업서트
+    # 3) (존재하지 않는 것만) 상세 본문 수집 → LLM 정리/태깅 → 업서트
     try:
         if not pending:
             _log(emit_raw, "[detail] pending=0 → nothing to do")
@@ -287,20 +314,31 @@ def startup_search_agent(state: State) -> State:
             _log(emit_raw, "[detail] batch fetch done; details=", len(details))
 
             # URL → full_text 매핑
-            url2text = {d["url"].replace("?tab=all", ""): d.get("full_text", "") for d in details}
+            url2text = {
+                d["url"].replace("?tab=all", ""): d.get("full_text", "") for d in details
+            }
 
             created = []
             for idx, it in enumerate(pending):
                 name = it["title"]
                 url = it["url"]
-                raw_text = url2text.get(url, "") or url2text.get(_normalize_all_tab(url), "")
+                raw_text = url2text.get(url, "") or url2text.get(
+                    _normalize_all_tab(url), ""
+                )
                 if not raw_text:
                     raw_text = "\n".join(filter(None, [name, url]))
 
-                _log(emit_raw, f"[upsert:{idx}] LLM clean/tag start; name={name} raw_len={len(raw_text)}")
-                cleaned, tags = _clean_and_tag_via_llm(name=name, raw_text=raw_text, hint="", emit=emit_raw)
+                _log(
+                    emit_raw,
+                    f"[upsert:{idx}] LLM clean/tag start; name={name} raw_len={len(raw_text)}",
+                )
+                cleaned, tags = _clean_and_tag_via_llm(
+                    name=name, raw_text=raw_text, hint="", emit=emit_raw
+                )
 
-                _log(emit_raw, f"[upsert:{idx}] upsert_company_profile start; tags={tags}")
+                _log(
+                    emit_raw, f"[upsert:{idx}] upsert_company_profile start; tags={tags}"
+                )
                 doc_id = upsert_company_profile(
                     vectordb,
                     company_name=name,
@@ -309,12 +347,22 @@ def startup_search_agent(state: State) -> State:
                     overwrite=False,
                     tags=tags,
                 )
-                _log(emit_raw, f"[upsert:{idx}] upsert_company_profile done; doc_id={doc_id}")
+                _log(
+                    emit_raw,
+                    f"[upsert:{idx}] upsert_company_profile done; doc_id={doc_id}",
+                )
                 created.append({"name": name, "id": doc_id, "tags": tags})
 
+            created_names = [c["name"] for c in created if "name" in c]
+
             if emit_raw:
-                print(json.dumps({"chroma_created": created, "chroma_skipped": []},
-                                 ensure_ascii=False, indent=2))
+                print(
+                    json.dumps(
+                        {"chroma_created": created, "chroma_skipped": []},
+                        ensure_ascii=False,
+                        indent=2,
+                    )
+                )
                 try:
                     col = get_vector_store()._collection
                     cnt = col.count()
@@ -327,45 +375,42 @@ def startup_search_agent(state: State) -> State:
         errors.append(f"[detail] {e}")
         _log(emit_raw, "[detail] ERROR:", e)
         traceback.print_exc()
+
+    # 4) selected_companies 채우기 (업서트 성공분 or 기존 랜덤)
     try:
-        vectordb = get_vector_store()
         chosen: List[str] = []
+        if created_names:
+            chosen = created_names[:10]
+        else:
+            if vectordb is None:
+                vectordb = get_vector_store()
+            chosen = _sample_existing_companies(vectordb, n=10)
 
-        # 이번 실행에서 생성한 기업 우선
-        seen = set()
-        for nm in created_names:
-            if nm and nm not in seen:
-                chosen.append(nm); seen.add(nm)
-                if len(chosen) >= 10:
-                    break
-
-        # 10개가 안 되면 DB에서 샘플 보충
-        if len(chosen) < 10:
-            add = _sample_existing_companies(vectordb, n=10 - len(chosen))
-            for nm in add:
-                if nm and nm not in seen:
-                    chosen.append(nm); seen.add(nm)
-                    if len(chosen) >= 10:
-                        break
-
-        # state에 세팅 (기존 값이 있으면 덮어쓰기)
+        state.setdefault("selected_companies", [])
         state["selected_companies"] = chosen
+        state.setdefault("current_company", None)
+        state.setdefault("current_tags", [])
+        state.setdefault("report_written", False)
+        state.setdefault("investment_decision", None)
     except Exception as e:
         errors.append(f"[postselect] {e}")
         _log(emit_raw, "[postselect] ERROR:", e)
-        traceback.print_exc()    
+        traceback.print_exc()
 
-    # 5) 반환
-    state.update({
-        "limit": limit,
-        "headless": headless,
-        "emit_raw": emit_raw,
-        "items": items,
-        "details": details,
-        "errors": errors,
-    })
+    # 5) 반환: 기존 state 복사 후 변경분 덮어쓰기
+    new_state = dict(state)
+    new_state.update(
+        {
+            "limit": limit,
+            "headless": headless,
+            "emit_raw": emit_raw,
+            "items": items,
+            "details": details,
+            "errors": errors,
+        }
+    )
+    return new_state
 
-    return state
 
 # agents/startup_search_agent.py 내부, 유틸 아래에 추가
 def _sample_existing_companies(vectordb, n: int = 10) -> List[str]:
@@ -385,9 +430,11 @@ def _sample_existing_companies(vectordb, n: int = 10) -> List[str]:
 
         # kind=company 만 집계 (최대 1000개까지 가져와서 샘플)
         # 대부분 규모에서는 이게 간단하고 빠름. 규모 커지면 offset 랜덤 전략 유지.
-        res = col.get(where={"kind": "company"}, include=["metadatas", "ids"], limit=1000)
-        metas = (res.get("metadatas") or [])
-        ids = (res.get("ids") or [])
+        res = col.get(
+            where={"kind": "company"}, include=["metadatas", "ids"], limit=1000
+        )
+        metas = res.get("metadatas") or []
+        ids = res.get("ids") or []
         pool = []
         for i, md in enumerate(metas):
             nm = (md or {}).get("name") or (ids[i] if i < len(ids) else None)
@@ -408,8 +455,8 @@ def _sample_existing_companies(vectordb, n: int = 10) -> List[str]:
             if col is None:
                 return names
             peek = col.peek(limit=n)
-            metas = (peek.get("metadatas") or [])
-            ids = (peek.get("ids") or [])
+            metas = peek.get("metadatas") or []
+            ids = peek.get("ids") or []
             out = []
             for i, md in enumerate(metas):
                 nm = (md or {}).get("name") or (ids[i] if i < len(ids) else None)
@@ -418,7 +465,6 @@ def _sample_existing_companies(vectordb, n: int = 10) -> List[str]:
             return out
         except Exception:
             return names
-
 
 
 # ── 8) 단독 실행 ──────────────────────────────────────────────────────────────

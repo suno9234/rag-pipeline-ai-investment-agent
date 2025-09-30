@@ -52,3 +52,4 @@ tavily-python>=0.3.6
 trafilatura>=1.7.0
 transformers>=4.43.0
 torch>=2.2.0
+matplotlib

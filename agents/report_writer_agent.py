@@ -1,9 +1,10 @@
 import os
 import json
+import re
 import matplotlib.pyplot as plt
 import numpy as np
+from typing import Dict, Any
 from dotenv import load_dotenv
-from evaluation_agent import EvaluationAgent
 
 from langchain_openai import ChatOpenAI
 from langchain.prompts import ChatPromptTemplate
@@ -17,21 +18,20 @@ from reportlab.pdfbase.ttfonts import TTFont
 from matplotlib import font_manager
 
 from state import State
-import re
-from reportlab.platypus import HRFlowable, ListFlowable, ListItem
-from reportlab.pdfgen import canvas
 
-
+# ───────────────────────────────────────────────────────────────────────────────
+# ENV
+# ───────────────────────────────────────────────────────────────────────────────
 load_dotenv()
-OPENAI_KEY = os.getenv("OPENAI_API_KEY")
+# OPENAI_API_KEY는 langchain_openai가 내부에서 env로 읽어가므로 여기서 별도 사용 안 함.
 
-# =========================
-# 폰트 설정 (안전 가드 포함)
-# =========================
+# ───────────────────────────────────────────────────────────────────────────────
+# 폰트 설정 (ReportLab + Matplotlib)
+# ───────────────────────────────────────────────────────────────────────────────
 FONT_PATH = os.path.join(os.path.dirname(__file__), "NotoSansKR-VariableFont_wght.ttf")
 FONT_NAME = "NotoSansKR"
-DOC_FONT_NAME = "Helvetica"  # ReportLab 기본 폰트로 안전 기본값
-font_prop = None              # Matplotlib용 안전 기본값
+DOC_FONT_NAME = "Helvetica"  # ReportLab 기본 폰트 fallback
+font_prop = None             # Matplotlib fallback
 
 # ReportLab 폰트 등록
 if os.path.exists(FONT_PATH):
@@ -47,16 +47,17 @@ else:
 if os.path.exists(FONT_PATH):
     try:
         font_prop = font_manager.FontProperties(fname=FONT_PATH)
-        plt.rcParams["font.family"] = font_prop.get_name()
+        # 폰트 이름이 시스템에 등록되지 않은 경우 대비: 직접 family 지정
+        plt.rcParams["font.sans-serif"] = [font_prop.get_name()] if font_prop.get_name() else []
+        plt.rcParams["font.family"] = "sans-serif"
     except Exception as e:
         print(f"⚠️ Matplotlib 폰트 등록 실패: {e} → 기본 폰트 사용")
 else:
     print(f"⚠️ Matplotlib: {FONT_PATH} 경로에 폰트 없음 → 기본 폰트 사용")
 
-
-# =========================
-# 프롬프트 (변경 금지)
-# =========================
+# ───────────────────────────────────────────────────────────────────────────────
+# 보고서 프롬프트
+# ───────────────────────────────────────────────────────────────────────────────
 report_prompt = ChatPromptTemplate.from_messages([
     (
         "system",
@@ -84,7 +85,6 @@ report_prompt = ChatPromptTemplate.from_messages([
 ### 3. 종합 평가 및 리스크 요인
 - 장점 요약 : 투자 권장 이유를 평가지표를 통해 구체적으로 설명
 - 리스크 요약
-
 """
     )
 ])
@@ -94,17 +94,20 @@ DEFAULT_CRITERIA = [
     "경쟁우위", "실적", "투자조건", "리스크"
 ]
 
-
-# =========================
+# ───────────────────────────────────────────────────────────────────────────────
 # 레이더차트 생성
-# =========================
-def generate_radar_chart(scores: dict, filename="radar_chart.png"):
+# ───────────────────────────────────────────────────────────────────────────────
+def generate_radar_chart(scores: Dict[str, int], filename: str = "radar_chart.png"):
     if not scores:
         print("⚠️ 레이더차트 생성 불가: 점수 데이터 없음")
         return None
 
     categories = list(scores.keys())
-    values = [int(v) for v in scores.values()]  # 혹시 문자열 점수가 올 수 있어 강제 int 변환
+    try:
+        values = [int(scores[k]) for k in categories]
+    except Exception:
+        print("⚠️ 레이더차트: 점수 변환 실패 → 스킵")
+        return None
 
     if not categories or not values:
         print("⚠️ 레이더차트 생성 불가: 카테고리/값 없음")
@@ -127,29 +130,30 @@ def generate_radar_chart(scores: dict, filename="radar_chart.png"):
         ax.set_xticklabels(categories, fontsize=9)
         ax.set_title(" ", fontsize=14, pad=20)
 
+    vmax = max(values) if values else 0
     try:
-        vmax = max(values)
-    except ValueError:
-        vmax = 0
-    ax.set_yticks(range(0, vmax + 1))
-    ax.set_ylim(0, max(vmax, 5))  # 축 최소 범위 확보(0~5)
+        ax.set_yticks(range(0, vmax + 1))
+    except Exception:
+        pass
+    ax.set_ylim(0, max(vmax, 5))  # 최소 범위 확보
 
     plt.tight_layout()
-    plt.savefig(filename)
-    plt.close()
+    try:
+        plt.savefig(filename, dpi=150, bbox_inches="tight")
+        plt.close()
+    except Exception as e:
+        print(f"⚠️ 레이더차트 저장 실패: {e}")
+        return None
     return filename
 
-
-# =========================
+# ───────────────────────────────────────────────────────────────────────────────
 # PDF 저장
-# =========================
-def save_pdf(company_name: str, report_json: dict, chart_file: str, output_path="report.pdf"):
+# ───────────────────────────────────────────────────────────────────────────────
+def save_pdf(company_name: str, report_json: Dict[str, Any], chart_file: str, output_path: str = "report.pdf"):
     doc = SimpleDocTemplate(output_path, pagesize=A4)
     story = []
 
-    # 스타일
     styles = getSampleStyleSheet()
-    # 동일 이름 중복 방지 위해 get 존재 체크
     if "KoreanNormal" not in styles:
         styles.add(ParagraphStyle(name="KoreanNormal", fontName=DOC_FONT_NAME, fontSize=10, leading=14))
     if "KoreanHeading" not in styles:
@@ -157,11 +161,12 @@ def save_pdf(company_name: str, report_json: dict, chart_file: str, output_path=
 
     # 1) 기업소개
     story.append(Paragraph("1. 기업소개", styles["KoreanHeading"]))
-    intro_text = report_json.get("기업소개", {}).get("text", "정보 없음").replace("\n", "<br/>")
+    intro_text = (report_json.get("기업소개", {}) or {}).get("text", "정보 없음")
+    intro_text = (intro_text or "").replace("\n", "<br/>")
     story.append(Paragraph(intro_text, styles["KoreanNormal"]))
     story.append(Spacer(1, 12))
 
-    # 2) 레이더차트 (있을 때만)
+    # 2) 레이더차트
     story.append(Paragraph("2. 종합평가 레이더그래프", styles["KoreanHeading"]))
     if chart_file and os.path.exists(chart_file):
         story.append(Image(chart_file, width=250, height=250))
@@ -172,7 +177,7 @@ def save_pdf(company_name: str, report_json: dict, chart_file: str, output_path=
     # 3) 평가점수 리뷰
     story.append(Paragraph("3. 평가점수 리뷰", styles["KoreanHeading"]))
     table_data = [["항목", "총점", "세부 점수(0 : 낮음 / 1 : 보통 / 2 : 높음)"]]
-    for row in report_json.get("평가점수리뷰", {}).get("table", []):
+    for row in (report_json.get("평가점수리뷰", {}) or {}).get("table", []):
         table_data.append([row.get("항목", ""), row.get("총점", ""), row.get("세부", "")])
 
     table = Table(table_data, colWidths=[80, 40, 350])
@@ -189,104 +194,15 @@ def save_pdf(company_name: str, report_json: dict, chart_file: str, output_path=
     story.append(table)
     story.append(Spacer(1, 12))
 
+    try:
+        doc.build(story)
+        print(f"✅ PDF 보고서 저장 완료: {output_path}")
+    except Exception as e:
+        print(f"⚠️ PDF 생성 실패: {e}")
 
-    doc.build(story)
-    print(f"✅ PDF 보고서 저장 완료: {output_path}")
-
-
-# =========================
-# 실행부
-# =========================
-if __name__ == "__main__":
-    candidate_companies = ["GRIDY", "다른기업1", "다른기업2"]
-
-    eval_agent = EvaluationAgent()
-    llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)
-    chain = report_prompt | llm
-
-    for company in candidate_companies:
-        evaluation = eval_agent.evaluate(company)  # 사용처 구조에 맞게 수정하세요
-        final_decision = evaluation.get("최종판정", "불합격")
-
-        if final_decision == "합격":
-            print(f"✅ {company}: 합격 → 보고서 작성")
-
-            # ===== LLM 호출에 필요한 변수들 채우기 (프롬프트 변경 없이) =====
-            summary = evaluation.get("요약", "정보 없음")
-            details = json.dumps(evaluation, ensure_ascii=False, indent=2)
-            criteria_list = ", ".join(DEFAULT_CRITERIA)
-            # 각 기준별 간단 불릿 (평가 dict에 값이 없으면 N/A)
-            criteria_bullets = "\n".join(
-                [f"- {c}: {evaluation.get(c, 'N/A')}" for c in DEFAULT_CRITERIA]
-            )
-
-            result = chain.invoke({
-                "company_name": company,
-                "summary": summary,
-                "details": details,
-                "criteria_list": criteria_list,
-                "criteria_bullets": criteria_bullets,
-            })
-
-            # ===== 보고서 JSON을 직접 구성 (LLM 텍스트를 기업소개로 수용) =====
-            # 점수 추출: evaluation 안에서 각 항목 점수(정수)를 찾으려 시도, 없으면 0
-            scores = {}
-            for c in DEFAULT_CRITERIA:
-                v = evaluation.get(c)
-                if isinstance(v, (int, float)) and v >= 0:
-                    scores[c] = int(v)
-                elif isinstance(v, dict):
-                    # 총점/score 키가 있을 때 사용
-                    if "총점" in v and isinstance(v["총점"], (int, float)):
-                        scores[c] = int(v["총점"])
-                    elif "score" in v and isinstance(v["score"], (int, float)):
-                        scores[c] = int(v["score"])
-                # 없으면 0으로 둠
-                if c not in scores:
-                    scores[c] = 0
-
-            # 평가표(테이블) 구성: 가능하면 상세 점수 문자열 합치기
-            table_rows = []
-            for c in DEFAULT_CRITERIA:
-                cell = evaluation.get(c)
-                total = scores.get(c, 0)
-                detail = ""
-                if isinstance(cell, dict):
-                    # dict인 경우 하위 정보를 "k:v" 조합으로 단순 펼침
-                    parts = []
-                    for k, v in cell.items():
-                        if k in ("총점", "score"):
-                            continue
-                        parts.append(f"{k}:{v}")
-                    detail = ", ".join(parts)
-                elif isinstance(cell, (int, float, str)):
-                    detail = str(cell)
-                table_rows.append({"항목": c, "총점": total, "세부": detail})
-
-            report_json = {
-                "기업소개": {"text": result.content},
-                "레이더차트": {"scores": scores},
-                "평가점수리뷰": {"table": table_rows},
-                "종합평가": {
-                    "장점": evaluation.get("장점", ""),
-                    "리스크": evaluation.get("리스크", ""),
-                    "최종권고": evaluation.get("최종판정", ""),
-                },
-            }
-
-            # 레이더차트 생성(점수 없으면 내부에서 None 리턴)
-            radar_file = generate_radar_chart(report_json.get("레이더차트", {}).get("scores", {}))
-
-            # PDF 저장 (차트 없으면 텍스트로 대체)
-            save_pdf(company, report_json, radar_file, f"{company}_investment_report.pdf")
-            break
-        else:
-            print(f"❌ {company}: 불합격 → 다음 기업 검토")
-    else:
-        print("⚠️ 모든 기업이 불합격 → 추가 후보 필요")
-
-
-
+# ───────────────────────────────────────────────────────────────────────────────
+# 유틸
+# ───────────────────────────────────────────────────────────────────────────────
 def _to_int(x, default=0):
     try:
         return int(x)
@@ -294,22 +210,30 @@ def _to_int(x, default=0):
         return default
 
 def _safe_filename(name: str) -> str:
-    return re.sub(r"[^\w\-.가-힣 ]", "_", name).strip() or "report"
+    out = re.sub(r"[^\w\-.가-힣 ]", "_", name or "")
+    return out.strip() or "report"
 
+# ───────────────────────────────────────────────────────────────────────────────
+# LangGraph 노드: 보고서 작성
+# ───────────────────────────────────────────────────────────────────────────────
 def report_writer_node(state: State) -> State:
-    """LangGraph 노드: evaluation을 바탕으로 보고서 LLM 호출 → 차트/ PDF 생성"""
-    # 1) 가드
+    """
+    evaluation(점수/판정)을 바탕으로 보고서 텍스트 생성 → 레이더차트 → PDF 저장.
+    state 업데이트:
+      - report_written: True
+      - report_path: 생성된 PDF 경로
+    """
     evaluation = state.get("evaluation") or {}
     if not evaluation:
-        # 평가 없으면 보고서 만들지 않음
+        # 평가가 없으면 종료
         return state
     if state.get("investment_decision") is False:
-        # 불합격이면 스킵
+        # 불합격이면 보고서 스킵
         return state
 
     company = state.get("current_company") or "startup"
 
-    # 2) LLM 호출 준비 (프롬프트는 파일 상단 정의 그대로 사용)
+    # LLM 호출 준비
     llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)
     chain = report_prompt | llm
 
@@ -318,29 +242,39 @@ def report_writer_node(state: State) -> State:
     criteria_list = ", ".join(DEFAULT_CRITERIA)
     criteria_bullets = "\n".join([f"- {c}: {evaluation.get(c, 'N/A')}" for c in DEFAULT_CRITERIA])
 
-    result = chain.invoke({
-        "company_name": company,
-        "summary": summary,
-        "details": details,
-        "criteria_list": criteria_list,
-        "criteria_bullets": criteria_bullets,
-    })
-    intro_text = (getattr(result, "content", "") or "").strip() or "정보 없음"
+    # 보고서 본문 텍스트 생성(회사 개요/지표별 분석/종합평가 문단)
+    try:
+        result = chain.invoke({
+            "company_name": company,
+            "summary": summary,
+            "details": details,
+            "criteria_list": criteria_list,
+            "criteria_bullets": criteria_bullets,
+        })
+        intro_text = (getattr(result, "content", "") or "").strip() or "정보 없음"
+    except Exception as e:
+        print(f"⚠️ LLM 보고서 본문 생성 실패: {e}")
+        intro_text = "정보 없음"
 
-    # 3) 점수/테이블 구성 (evaluation 기반)
-    scores = {}
+    # 점수/테이블 구성
+    scores: Dict[str, int] = {}
     table_rows = []
     for c in DEFAULT_CRITERIA:
         cell = evaluation.get(c)
-        total = 0; detail = ""
+        total = 0
+        detail = ""
         if isinstance(cell, dict):
-            if "총점" in cell: total = _to_int(cell["총점"])
-            elif "score" in cell: total = _to_int(cell["score"])
+            if "총점" in cell:
+                total = _to_int(cell["총점"])
+            elif "score" in cell:
+                total = _to_int(cell["score"])
             parts = [f"{k}:{v}" for k, v in cell.items() if k not in ("총점", "score")]
             detail = ", ".join(parts)
         elif isinstance(cell, (int, float, str)):
-            if isinstance(cell, (int, float)): total = int(cell)
-            else: total = _to_int(cell)
+            if isinstance(cell, (int, float)):
+                total = int(cell)
+            else:
+                total = _to_int(cell)
             detail = str(cell)
         scores[c] = total
         table_rows.append({"항목": c, "총점": total, "세부": detail})
@@ -349,7 +283,6 @@ def report_writer_node(state: State) -> State:
         "기업소개": {"text": intro_text},
         "레이더차트": {"scores": scores},
         "평가점수리뷰": {"table": table_rows},
-        # 종합평가는 optional
         "종합평가": {
             "장점": evaluation.get("장점", ""),
             "리스크": evaluation.get("리스크", ""),
@@ -357,15 +290,21 @@ def report_writer_node(state: State) -> State:
         },
     }
 
-    # 4) 차트/ PDF 생성
+    # 차트/ PDF 생성
     base = _safe_filename(company)
-    chart_path = generate_radar_chart(scores, filename=f"{base}_radar.png")
+    chart_path = generate_radar_chart(report_json.get("레이더차트", {}).get("scores", {}), filename=f"{base}_radar.png")
     pdf_path = f"{base}_investment_report.pdf"
     save_pdf(company, report_json, chart_path, pdf_path)
 
-    # 5) state 업데이트 후 반환
+    # state 업데이트 후 반환
     state.update({
         "report_written": True,
         "report_path": pdf_path
     })
     return state
+
+# --- alias for graph.py compatibility ---
+def report_writer_agent(state: State) -> State:
+    return report_writer_node(state)
+
+__all__ = ["report_writer_node", "report_writer_agent"]

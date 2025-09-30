@@ -4,6 +4,7 @@ from dotenv import load_dotenv
 from langchain_openai import ChatOpenAI
 from langchain.prompts import ChatPromptTemplate
 from state import State
+from typing import Dict, Any
 
 # .env에서 OPENAI_API_KEY 불러오기
 load_dotenv()
@@ -213,4 +214,7 @@ if __name__ == "__main__":
     print("✅ GRIDY 평가 결과")
     print(json.dumps(evaluation, indent=2, ensure_ascii=False))
     
+
+def investment_decision_agent(state: State) -> State:
+    return evaluation_agent_node(state)
     
