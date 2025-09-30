@@ -4,9 +4,13 @@ NextUnicorn에서 모빌리티 분야 스타트업을 탐색하고, 시장성·�
 
 ## Overview
 
-- Objective : 모빌리티 스타트업의 기술력, 시장성, 리스크 등을 기준으로 투자 적합성 분석
-- Method : AI Agent + Agentic RAG
-- Tools : 시장성 분석 에이전트, 경쟁사 분석 에이전트, 투자 판단 에이전트, 보고서 생성 에이전트
+- **User Scenario** :  
+  투자자가 특정 도메인(예: 모빌리티)에 대한 스타트업을 조사하고, 투자 판단 보고서를 작성하는 상황을 가정했습니다.  
+  본 프로젝트는 투자자가 직접 스타트업 목록을 조사하고, 분석하고, 보고서를 작성하는 과정을 **에이전트 워크플로우로 자동화**합니다.  
+
+- **Objective** : 모빌리티 스타트업의 기술력, 시장성, 리스크 등을 기준으로 투자 적합성 분석  
+- **Method** : AI Agent + Agentic RAG  
+- **Tools** : 시장성 분석 에이전트, 경쟁사 분석 에이전트, 투자 판단 에이전트, 보고서 생성 에이전트
 
 ## Features
 
@@ -14,7 +18,7 @@ NextUnicorn에서 모빌리티 분야 스타트업을 탐색하고, 시장성·�
   NextUnicorn 크롤링을 통해 모빌리티 스타트업 리스트 자동 확보
   
 - ✅ **시장성 분석**  
-  해당 스타트업의 산업 동향과 스타트업의 동향을 비교해 시장성 분석
+  산업 동향과 해당 스타트업의 동향을 비교해 시장성 분석
   
 - ✅ **경쟁사 분석**  
   유사 모빌리티 스타트업 경쟁사 3곳을 선정하여 경쟁사 분석
@@ -35,10 +39,15 @@ NextUnicorn에서 모빌리티 분야 스타트업을 탐색하고, 시장성·�
 | VDB | **Chroma**                   |
 | Crawling     | **Playwright** (NextUnicorn 크롤러)        |
 
+## RAG Metadata
+
+- name: 기업명
+- kind: 기업 분석/산업 분석 구분
+
 ## Agents
  
-- **startup_search_agent** : NextUnicorn 크롤링 → LLM 요약/태깅 → Chroma 저장
-- **industry_search_agent** : Tavily Search → 검색 결과 전처리 → Chroma 저장
+- **startup_search_agent** : NextUnicorn 크롤링 → llm 태깅 요청 → Chroma 저장
+- **industry_search_agent** : Tavily Search → Chroma 저장
 - **market_eval_agent** : 산업 분석 내용 기반으로 스타트업의 시장성 분석
 - **competitor_analysis_agent** : 경쟁사 Top-3 검색 → 비교 분석 보고서 생성  
 - **investment_decision_agent** : 투자 여부(True/False) 판단 / (창업자 역량, 시장성, 제품력, 경쟁력, 실적, 투자 조건, 리스크)
@@ -54,11 +63,6 @@ NextUnicorn에서 모빌리티 분야 스타트업을 탐색하고, 시장성·�
 - bool: 보고서 작성 여부 (최소 1개 이상 보고서 생성 시 True)
 - bool: 투자 여부 판단 결과 ( True / False )
 
-## RAG Metadata
-
-- name: 기업명
-- kind: 기업 분석/산업 분석 구분
-
 ## Architecture
 <img width="343" height="735" alt="image" src="https://github.com/user-attachments/assets/4581dffd-1db4-4799-9b8c-1e38760a1699" />
 
@@ -72,3 +76,7 @@ NextUnicorn에서 모빌리티 분야 스타트업을 탐색하고, 시장성·�
 - 신순호 : 크롤링 + 기업 분석 에이전트 개발
 - 우찬민 : 투자 여부 판단 에이전트, 투자 요약 보고서 에이전트 개발
 - 이재휘 : 산업 분석 에이전트 개발
+
+## Future Work & Scalability
+- 모빌리티 외 **헬스케어, 핀테크, 에듀테크** 등으로 도메인 확장 가능  
+- IR PDF, 뉴스 기사, 정부 공공데이터 등 **멀티 소스 입력** 확장
