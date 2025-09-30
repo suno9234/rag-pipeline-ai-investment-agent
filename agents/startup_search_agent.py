@@ -1,9 +1,10 @@
 # agents/startup_search_agent.py
 from __future__ import annotations
-from typing import TypedDict, List, Dict, Any, Optional, Tuple
+from typing import List, Dict, Any, Optional, Tuple
 import json
 import re
 import os
+import random
 import traceback
 from state import State
 
@@ -27,7 +28,7 @@ from langchain_core.prompts import ChatPromptTemplate
 # 환경변수 OPENAI_API_KEY 필요
 _llm = ChatOpenAI(model="gpt-4o-mini", temperature=0.2)
 
-# 한 번에 처리: cleaned 섹션 + tags 생성
+# 한 번에 처리: cleaned 섹션 + tags 생성 (tags는 상위 레벨 배열로 통일)
 _COMBINED_PROMPT = ChatPromptTemplate.from_messages(
     [
         (
@@ -35,8 +36,8 @@ _COMBINED_PROMPT = ChatPromptTemplate.from_messages(
             "너는 벤처캐피탈 애널리스트다. 입력으로 제공되는 '회사 원문 텍스트(raw_text)'만을 기반으로 "
             "아래 두 출력을 동시에 생성하라. 섹션 제목이 없어도 원문 전체에서 의미 단위로 추출하라.\n\n"
             "[출력 스키마]\n"
-            "{{\n"
-            '  "cleaned": {{\n'
+            "{\n"
+            '  "cleaned": {\n'
             '    "summary": "...",\n'
             '    "services": "...",\n'
             '    "team": "...",\n'
@@ -44,16 +45,16 @@ _COMBINED_PROMPT = ChatPromptTemplate.from_messages(
             '    "news": "...",\n'
             '    "info": "...",\n'
             '    "company": "..."\n'
-            '    "tags": "태그1 | 태그2 | 태그3"\n'
-            "  }},\n"
-            "}}\n\n"
+            "  },\n"
+            '  "tags": ["태그1","태그2","태그3"]\n'
+            "}\n\n"
             "[정리 규칙]\n"
-            "1) cleaned 8키는 항상 포함.\n"
+            "1) cleaned 7키는 항상 포함.\n"
             "2) 해시태그/URL/광고·이벤트/내비게이션 제거, 중복 제거, 3+개행→1, 간단 맞춤법 보정.\n"
             "3) 각 섹션 최대 800자, 과장은 줄이고 사실 위주. 근거 없으면 빈 문자열(\"\").\n"
             "4) funding은 문서 어디에 있어도(소개/뉴스 등) 시리즈/라운드/누적 투자/투자 금액/투자자 신호를 모아 요약.\n\n"
             "[태그 규칙]\n"
-            "tags는 한국어 2~4어절, 최대 3개. ' | ' 구분자로 연결.\n\n"
+            "한국어 2~4어절, 최대 3개. 핵심 비즈니스/가치/도메인 드러내기.\n\n"
             "[출력 형식]\n"
             "위 JSON만 출력(코드펜스 금지).",
         ),
@@ -63,16 +64,6 @@ _COMBINED_PROMPT = ChatPromptTemplate.from_messages(
         ),
     ]
 )
-
-# ── 4) 상태 타입 ──────────────────────────────────────────────────────────────
-class State(TypedDict, total=False):
-    input_text: str
-    limit: int
-    headless: bool
-    emit_raw: bool
-    items: List[Dict[str, Any]]
-    details: List[Dict[str, Any]]
-    errors: List[str]
 
 # ── 5) 내부 유틸 ──────────────────────────────────────────────────────────────
 def _parse_limit_from_text(text: Optional[str], default: int = 2) -> int:
@@ -135,8 +126,8 @@ def _clean_and_tag_via_llm(
 
         data = _json.loads(out) if out else {}
         cleaned_in = (data.get("cleaned") or {}) if isinstance(data, dict) else {}
-        tags_in = (data.get("tags") or []) if isinstance(data, dict) else []
 
+        # cleaned 강제 보정 + 로컬 정리
         cleaned: Dict[str, str] = {}
         for k in ["summary", "services", "team", "funding", "news", "info", "company"]:
             v = str((cleaned_in.get(k) or "")).strip()
@@ -145,13 +136,22 @@ def _clean_and_tag_via_llm(
                 v = v[:800]
             cleaned[k] = v
 
+        # tags: 상위 레벨 배열 우선, 혹시 cleaned.tags 문자열로 줄 수도 있어 방어
+        tags_raw = data.get("tags")
         tags: List[str] = []
-        if isinstance(tags_in, list):
-            for t in tags_in[:3]:
-                if isinstance(t, str):
+        if isinstance(tags_raw, list):
+            for t in tags_raw[:3]:
+                if isinstance(t, str) and t.strip():
+                    tags.append(t.strip())
+        else:
+            # cleaned 내부에 "tags": "태그1 | 태그2 | 태그3" 같은 문자열이 올 수도 있음
+            maybe_str = cleaned_in.get("tags")
+            if isinstance(maybe_str, str) and maybe_str.strip():
+                for t in maybe_str.split("|"):
                     tt = t.strip()
                     if tt:
                         tags.append(tt)
+                tags = tags[:3]
 
         _log(emit, "[llm] combined: done; lens:",
              {k: len(cleaned.get(k, "")) for k in cleaned},
@@ -161,6 +161,7 @@ def _clean_and_tag_via_llm(
     except Exception as e:
         _log(emit, "[llm] combined: ERROR:", e)
         traceback.print_exc()
+        # 폴백: 전부 빈칸
         return (
             {k: "" for k in ["summary", "services", "team", "funding", "news", "info", "company"]},
             [],
@@ -200,7 +201,6 @@ def startup_search_agent(state: State) -> State:
     # 3) 크로마: 존재여부 먼저 검사 → 존재하면 즉시 종료(break)
     pending: List[Dict[str, Any]] = []
     try:
-        _log(emit_raw, "[chroma] START: get_company_store()")
         vectordb = get_vector_store()
         try:
             col_obj = getattr(vectordb, "_collection", None)
@@ -224,7 +224,6 @@ def startup_search_agent(state: State) -> State:
             if found_id:
                 # ✅ 정책: 하나라도 이미 있으면 즉시 중단
                 _log(emit_raw, f"[loop:{idx}] exists → break (최신 우선 정책)")
-                # 상태에 스킵 기록만 남기고 종료
                 if emit_raw:
                     print(json.dumps(
                         {"chroma_created": [], "chroma_skipped": [{"name": name, "id": found_id, "reason": "exists"}]},
@@ -251,8 +250,7 @@ def startup_search_agent(state: State) -> State:
         if not pending:
             _log(emit_raw, "[detail] pending=0 → nothing to do")
         else:
-            # 필요한 URL만 all-tab로 모아 배치 상세 수집
-            urls = [ _normalize_all_tab(p["url"]) for p in pending if p.get("url") ]
+            urls = [_normalize_all_tab(p["url"]) for p in pending if p.get("url")]
             _log(emit_raw, f"[detail] batch fetch start; urls={len(urls)}")
             details = __import__("asyncio").run(
                 nextunicorn_company_details_batch(urls, headless=headless)
@@ -260,16 +258,14 @@ def startup_search_agent(state: State) -> State:
             _log(emit_raw, "[detail] batch fetch done; details=", len(details))
 
             # URL → full_text 매핑
-            url2text = { d["url"].replace("?tab=all",""): d.get("full_text","") for d in details }
+            url2text = {d["url"].replace("?tab=all", ""): d.get("full_text", "") for d in details}
 
             created = []
             for idx, it in enumerate(pending):
                 name = it["title"]
                 url = it["url"]
                 raw_text = url2text.get(url, "") or url2text.get(_normalize_all_tab(url), "")
-
                 if not raw_text:
-                    # 카드 정보만으로 최소 텍스트 구성
                     raw_text = "\n".join(filter(None, [name, url]))
 
                 _log(emit_raw, f"[upsert:{idx}] LLM clean/tag start; name={name} raw_len={len(raw_text)}")
@@ -293,7 +289,7 @@ def startup_search_agent(state: State) -> State:
                 try:
                     col = get_vector_store()._collection
                     cnt = col.count()
-                    print("[chroma] companies.count =", cnt)
+                    print("[chroma] investment_ai.count =", cnt)
                 except Exception as e:
                     print("[chroma] count error:", e)
                     traceback.print_exc()
@@ -302,7 +298,33 @@ def startup_search_agent(state: State) -> State:
         errors.append(f"[detail] {e}")
         _log(emit_raw, "[detail] ERROR:", e)
         traceback.print_exc()
+    try:
+        vectordb = get_vector_store()
+        chosen: List[str] = []
 
+        # 이번 실행에서 생성한 기업 우선
+        seen = set()
+        for nm in created_names:
+            if nm and nm not in seen:
+                chosen.append(nm); seen.add(nm)
+                if len(chosen) >= 10:
+                    break
+
+        # 10개가 안 되면 DB에서 샘플 보충
+        if len(chosen) < 10:
+            add = _sample_existing_companies(vectordb, n=10 - len(chosen))
+            for nm in add:
+                if nm and nm not in seen:
+                    chosen.append(nm); seen.add(nm)
+                    if len(chosen) >= 10:
+                        break
+
+        # state에 세팅 (기존 값이 있으면 덮어쓰기)
+        state["selected_companies"] = chosen
+    except Exception as e:
+        errors.append(f"[postselect] {e}")
+        _log(emit_raw, "[postselect] ERROR:", e)
+        traceback.print_exc()    
     # 5) 반환
     return {
         "limit": limit,
@@ -312,3 +334,66 @@ def startup_search_agent(state: State) -> State:
         "details": details,
         "errors": errors,
     }
+
+# agents/startup_search_agent.py 내부, 유틸 아래에 추가
+def _sample_existing_companies(vectordb, n: int = 10) -> List[str]:
+    """
+    Chroma 메타데이터(kind=company)에서 랜덤으로 최대 n개 회사명(name)을 샘플링.
+    _collection.get(limit, offset)를 이용해 과도한 전체 로드를 피함.
+    """
+    names: List[str] = []
+    try:
+        col = getattr(vectordb, "_collection", None)
+        if col is None:
+            return names
+
+        total = col.count()  # 전체 문서 수
+        if total <= 0:
+            return names
+
+        # kind=company 만 집계 (최대 1000개까지 가져와서 샘플)
+        # 대부분 규모에서는 이게 간단하고 빠름. 규모 커지면 offset 랜덤 전략 유지.
+        res = col.get(where={"kind": "company"}, include=["metadatas", "ids"], limit=1000)
+        metas = (res.get("metadatas") or [])
+        ids = (res.get("ids") or [])
+        pool = []
+        for i, md in enumerate(metas):
+            nm = (md or {}).get("name") or (ids[i] if i < len(ids) else None)
+            if nm:
+                pool.append(nm)
+
+        if not pool:
+            return names
+
+        if len(pool) <= n:
+            return pool
+
+        return random.sample(pool, n)
+    except Exception:
+        # 문제가 생기면 peek로 대체 (처음 N개)
+        try:
+            col = getattr(vectordb, "_collection", None)
+            if col is None:
+                return names
+            peek = col.peek(limit=n)
+            metas = (peek.get("metadatas") or [])
+            ids = (peek.get("ids") or [])
+            out = []
+            for i, md in enumerate(metas):
+                nm = (md or {}).get("name") or (ids[i] if i < len(ids) else None)
+                if nm:
+                    out.append(nm)
+            return out
+        except Exception:
+            return names
+
+
+
+# ── 8) 단독 실행 ──────────────────────────────────────────────────────────────
+if __name__ == "__main__":
+    s: State = {
+        "input_text": "NextUnicorn에서 스타트업 2개 알려줘",
+        "headless": True,
+        "emit_raw": True,
+    }
+    s = startup_search_agent(s)

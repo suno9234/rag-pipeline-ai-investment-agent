@@ -14,3 +14,8 @@ class State(TypedDict):
     # 최종 판단 및 보고서
     report_written: Annotated[bool, "10개 기업 중 하나라도 보고서 작성 여부"]
     investment_decision: Annotated[Optional[bool], "투자 여부 판단 결과 (True/False)"]
+
+    #첫 시작 임시 state
+    input_text: Annotated[str, "ex)NextUnicorn에서 스타트업 2개 알려줘"]
+    headless : Annotated[bool,"playwright headless 옵션"]
+    emit_raw:Annotated[bool,"임시 출력"]
