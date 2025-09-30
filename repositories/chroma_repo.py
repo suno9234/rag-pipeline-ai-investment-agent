@@ -1,199 +1,163 @@
 # repositories/chroma_repo.py
 from __future__ import annotations
-from typing import Dict, Any, List, Optional, Tuple
-import re
+from typing import Tuple, List, Dict, Any, Optional
 
-from langchain_chroma import Chroma
-from config.chroma import get_company_store, get_industry_store
-from tools.nextunicorn import summarize_company_text  # 상세 본문 → 섹션 요약
+# ✅ 더 이상 config.chroma 에서 아무 것도 import 하지 않습니다.
+# from config.chroma import get_company_store, get_industry_store  # ← 삭제
 
+# LangChain Chroma VectorStore를 받아서만 동작하도록 구성합니다.
+# vectordb 타입: langchain_chroma.Chroma
 
-def _slugify(name: str) -> str:
-    s = name.strip().lower()
-    s = re.sub(r"[^0-9a-z가-힣]+", "-", s)
-    s = re.sub(r"-{2,}", "-", s).strip("-")
-    return s or "doc"
+def _join_sections(structured: Dict[str, str]) -> str:
+    parts = []
+    def add(label: str, key: str):
+        v = (structured.get(key) or "").strip()
+        if v:
+            parts.append(f"[{label}] {v}")
+    add("회사명", "company")
+    add("요약", "summary")
+    add("서비스/제품", "services")
+    add("팀", "team")
+    add("투자", "funding")
+    add("소식", "news")
+    add("회사 정보", "info")
+    return "\n".join(parts).strip()
 
-
-def _build_company_doc_text(company_name: str, structured: Dict[str, str]) -> str:
-    parts = [
-        f"[회사명] {company_name}",
-        f"[요약] {structured.get('summary','').strip()}",
-        f"[서비스/제품] {structured.get('services','').strip()}",
-        f"[팀] {structured.get('team','').strip()}",
-        f"[투자] {structured.get('funding','').strip()}",
-        f"[소식] {structured.get('news','').strip()}",
-        f"[회사 정보] {structured.get('info','').strip()}",
-        f"[원문 머리] {structured.get('company','').strip()}",
-    ]
-    return "\n".join([p for p in parts if p and p.strip()])
-
-
-# repositories/chroma_repo.py
-
-
-def find_company_exact_or_similar(store, company_name: str, k=3, score_threshold=0.18):
-    # 0) 정규화
-    q = (company_name or "").strip()
-    if not q:
-        return None, None
-
-    norm = q.lower().replace(" ", "")
-
-    # 1) 메타데이터 exact(where)로 먼저 조회
+def find_company_exact_or_similar(
+    vectordb,
+    *,
+    company_name: str,
+    k: int = 3,
+    score_threshold: float = 0.18,
+) -> Tuple[Optional[str], float]:
+    """
+    회사명이 동일한 문서가 있으면 그 id를, 없으면 유사검색으로 근접 id를 반환.
+    score_threshold는 (거리 기반) 점수의 최대 허용치로 가정합니다.
+    """
+    # 1) 메타데이터 exact match 시도
     try:
-        col = store._collection  # langchain_chroma.Chroma 내부의 chromadb 컬렉션
-        got = col.get(
-            where={
-                "$or": [
-                    {"name": {"$eq": q}},
-                    {"name": {"$eq": norm}},
-                    {"id": {"$eq": q}},
-                    {"id": {"$eq": norm}},
-                ]
-            },
-            include=["metadatas"],
-        )
-        ids = got.get("ids") or []
-        if ids:
-            return ids[0], 1.0  # 확정 매치
+        # LangChain의 Chroma는 내부 collection에 접근 가능
+        col = getattr(vectordb, "_collection", None)
+        if col is not None:
+            res = col.get(
+                where={"$and": [{"kind": "company"}, {"name": company_name}]},
+                include=["metadatas", "ids"],
+            )
+            ids = (res.get("ids") or [])
+            metas = (res.get("metadatas") or [])
+            if ids:
+                return ids[0], 0.0
     except Exception:
         pass
 
-    # 2) 임베딩 유사도(문서 본문 기반)
+    # 2) 유사도 검색 (회사명 쿼리)
     try:
-        sims = store.similarity_search_with_score(q, k=k)
-        # sims: [(Document, score), ...]  # langchain_chroma는 score가 L2 거리일 수 있음
-        # score 의미가 거리면 작을수록 유사 → threshold 로직 맞게 해석 필요
-        best = None
-        for doc, score in sims:
-            md = doc.metadata or {}
-            name = (md.get("name") or "").strip()
-            if name and (name == q or name.lower().replace(" ", "") == norm):
-                best = (md.get("id") or name, score)
-                break
-        if not best and sims:
-            # 이름이 딱 안맞아도, 임계치 안쪽이면 채택
-            doc, score = sims[0]
-            if score is not None and score <= score_threshold:
-                md = doc.metadata or {}
-                return (md.get("id") or md.get("name")), score
-        if best:
-            return best
-    except Exception:
-        pass
+        # LC 버전에 따라 함수가 다를 수 있어 두 가지를 시도
+        docs_scores = None
+        try:
+            docs_scores = vectordb.similarity_search_with_score(
+                query=company_name,
+                k=k,
+                filter={"kind": "company"},
+            )
+        except Exception:
+            # 일부 버전에선 relevance_scores 형태 사용
+            docs_scores = vectordb.similarity_search_with_relevance_scores(
+                query=company_name,
+                k=k,
+                filter={"kind": "company"},
+            )
+        if not docs_scores:
+            return None, 1.0
 
-    return None, None
+        # (Document, score) or (Document, relevance) 형태
+        best_id = None
+        best_score = 1e9
+        for item in docs_scores:
+            # tuple 형태 가정
+            if isinstance(item, tuple) and len(item) >= 2:
+                doc, score = item[0], float(item[1])
+            else:
+                # 혹시 다른 형태면 skip
+                continue
+            meta = getattr(doc, "metadata", {}) or {}
+            cid = meta.get("id") or meta.get("name")
+            if cid is None:
+                continue
+            if score < best_score:
+                best_score = score
+                best_id = cid
+
+        if best_id is not None and best_score <= score_threshold:
+            return best_id, best_score
+        return None, best_score
+    except Exception:
+        return None, 1.0
 
 
 def upsert_company_profile(
-    store, company_name, structured, url=None, overwrite=False, tags=None
+    vectordb,
+    *,
+    company_name: str,
+    structured: Dict[str, str],
+    url: str,
+    overwrite: bool = False,
+    tags: List[str] | None = None,
 ) -> str:
-    doc_id = _slugify(company_name)
-    text = _build_company_doc_text(company_name, structured)
-    tags_str = " | ".join(
-        t.strip() for t in (tags or []) if isinstance(t, str) and t.strip()
-    )
-    metadata = {
-        "kind": "company",
-        "id": doc_id,
+    """
+    단일 문서를 upsert.
+    - id 는 company_name 그대로 사용 (한글 가능)
+    - tags(list)는 " | " 로 합쳐 메타데이터에 저장
+    """
+    doc_id = company_name
+    meta: Dict[str, Any] = {
+        "id": company_name,
         "name": company_name,
-        "url": url or "",
-        "tags": tags_str,  # ← 항상 문자열 (빈 리스트면 빈 문자열)
+        "url": url,
+        "kind": "company",
+        "tags": " | ".join(tags or []),
     }
+    text = _join_sections(structured)
+
+    # 덮어쓰기 옵션
     if overwrite:
         try:
-            store.delete(ids=[doc_id])
+            vectordb.delete(ids=[doc_id])
         except Exception:
             pass
-    store.add_texts(texts=[text], metadatas=[metadata], ids=[doc_id])
-    return doc_id
 
-
-def ensure_company_profiles(
-    items: List[Dict[str, Any]],
-    details: List[Dict[str, Any]],
-    *,
-    overwrite: bool = False,
-) -> Dict[str, Any]:
-    store = get_company_store()
-    url2detail = {d.get("url"): d for d in (details or [])}
-    created, skipped, errors = [], [], []
-
-    for it in items or []:
-        name = (it.get("title") or "").strip()
-        url = it.get("url")
-        if not name:
-            continue
-
+    # 이미 존재하면 덮어쓰지 않고 종료 (overwrite=False)
+    if not overwrite:
         try:
-            found_id, _ = find_company_exact_or_similar(store, name)
-            if found_id and not overwrite:
-                skipped.append({"name": name, "id": found_id, "reason": "exists"})
-                continue
+            col = getattr(vectordb, "_collection", None)
+            if col is not None:
+                res = col.get(
+                    where={"$and": [{"kind": "company"}, {"id": doc_id}]},
+                    include=["ids"],
+                )
+                if res and res.get("ids"):
+                    return doc_id
+        except Exception:
+            pass
 
-            structured = {}
-            if url and url in url2detail and url2detail[url].get("full_text"):
-                structured = summarize_company_text(url2detail[url]["full_text"])
-            else:
-                structured = {
-                    "summary": it.get("summary", ""),
-                    "services": "",
-                    "team": "",
-                    "news": "",
-                    "funding": "",
-                    "info": "",
-                    "company": "",
-                }
-
-            # 기본 ensure는 태그 없이 저장 (태그는 에이전트에서 생성해 넘겨주는 걸 권장)
-            doc_id = upsert_company_profile(
-                store, name, structured, url=url, overwrite=overwrite, tags=None
-            )
-            created.append({"name": name, "id": doc_id})
-
-        except Exception as e:
-            errors.append(f"{name}: {e}")
-
+    # upsert (LangChain VectorStore API)
     try:
-        store.persist()
+        vectordb.add_texts(
+            texts=[text],
+            metadatas=[meta],
+            ids=[doc_id],
+        )
     except Exception:
-        pass
+        # add_texts에서 중복으로 실패하면 delete 후 재시도
+        try:
+            vectordb.delete(ids=[doc_id])
+        except Exception:
+            pass
+        vectordb.add_texts(
+            texts=[text],
+            metadatas=[meta],
+            ids=[doc_id],
+        )
 
-    return {"created": created, "skipped": skipped, "errors": errors}
-
-
-def upsert_industry_report(
-    sector: str,
-    title: str,
-    body: str,
-    source_url: Optional[str] = None,
-) -> str:
-    store = get_industry_store()
-    doc_id = _slugify(f"{sector}-{title[:60]}")
-    metadata = {
-        "kind": "industry",
-        "sector": sector,
-        "title": title,
-        "source": source_url or "",
-    }
-    store.add_texts(texts=[body], metadatas=[metadata], ids=[doc_id])
-    try:
-        store.persist()
-    except Exception:
-        pass
+    # 영속화는 Chroma가 자동 처리 (langchain_chroma는 persist_directory 지정 시 내부적으로 flush)
     return doc_id
-
-
-def query_industry_by_sector(sector: str, k: int = 5):
-    store = get_industry_store()
-    return store.similarity_search(
-        query=sector, k=k, filter={"kind": "industry", "sector": sector}
-    )
-
-
-def get_company_by_name(
-    company_name: str,
-) -> Tuple[Optional[str], Optional[Dict[str, Any]]]:
-    store = get_company_store()
-    return find_company_exact_or_similar(store, company_name)
