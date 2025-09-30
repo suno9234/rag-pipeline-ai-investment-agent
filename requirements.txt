@@ -1,16 +1,20 @@
 # === LangChain & LangGraph ===
-langchain>=0.2.0
-langchain-core>=0.2.0
-langgraph>=0.1.0
-langchain-community>=0.2.0
+langchain>=0.2.10
+langchain-core>=0.2.10
+langchain-community>=0.2.10
+langchain-openai>=0.1.7
+langgraph>=0.1.8
 
-# === OpenAI API (LLM/Embedding) ===
-langchain-openai
-openai>=1.30.0
+# === OpenAI API ===
+openai>=1.35.0
 
-# === VectorDB / Embedding Search ===
-faiss-cpu>=1.8.0     
-# chromadb>=0.5.0
+# === HuggingFace / Chroma ===
+langchain-huggingface>=0.0.3
+langchain-chroma>=0.1.2
+huggingface_hub>=0.23.0
+chromadb>=0.5.5
+faiss-cpu>=1.8.0
+sentence-transformers>=2.7.0
 
 # === Documents ===
 pypdf>=4.0.0
