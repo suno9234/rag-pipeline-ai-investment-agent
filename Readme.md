@@ -45,13 +45,14 @@ NextUnicorn에서 모빌리티 분야 스타트업을 탐색하고, 시장성·�
 - **report_writer_agent** : 투자 요약 보고서 생성
 
 ## State
-List[str]: 선정 기업 10개 기업명 목록 (분석 완료 시 pop)
-str: 현재 기업명
-List[str]: 현재 기업의 태깅 목록
-str: 시장성 조사 내용
-str: 경쟁사 분석 내용
-bool: 보고서 작성 여부 (최소 1개 이상 보고서 생성 시 True)
-bool: 투자 여부 판단 결과 (True/False)
+
+- List[str]: 선정 기업 10개 기업명 목록 (분석 완료 시 pop)
+- str: 현재 분석 중인 기업명
+- List[str]: 현재 기업의 태깅 목록
+- str: 시장성 분석 내용
+- str: 경쟁사 분석 내용
+- bool: 보고서 작성 여부 (최소 1개 이상 보고서 생성 시 True)
+- bool: 투자 여부 판단 결과 ( True / False )
 
 ## Architecture
 <img width="343" height="735" alt="image" src="https://github.com/user-attachments/assets/4581dffd-1db4-4799-9b8c-1e38760a1699" />
