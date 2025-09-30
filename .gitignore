@@ -1,5 +1,6 @@
 # login session
 nextunicorn_state.json
+docs
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]

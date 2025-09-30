@@ -51,6 +51,14 @@ _COMPETITOR_PROMPT = ChatPromptTemplate.from_messages(
     ]
 )
 
+import unicodedata
+
+def _norm(s: str) -> str:
+    """공백/대소문자/전각-반각 차이 제거한 비교용 정규화"""
+    if not s:
+        return ""
+    s = unicodedata.normalize("NFKC", s)
+    return "".join(s.split()).lower()
 
 def competitor_analysis_agent(state: State) -> State:
     """
@@ -66,20 +74,24 @@ def competitor_analysis_agent(state: State) -> State:
             return state
 
         # 1) 현재 회사 문서 검색
-        docs = vectordb.similarity_search(
-            current_company,
-            k=1,
-            filter={"kind": "company", "name": current_company},
-        )
+        raw = vectordb.similarity_search(current_company, k=8)
+        docs = [
+            d for d in raw
+            if d.metadata.get("kind") == "company"
+            and _norm(d.metadata.get("name", "")) == _norm(current_company)
+        ][:1]
+
         current_analysis = docs[0].page_content if docs else "⚠️ 현재 기업 정보 없음"
 
+
         # 2) 경쟁사 후보 검색 (자기 자신 제외)
-        competitors = vectordb.similarity_search(
-            current_analysis,
-            k=3,
-            filter={"kind": "company"},
-        )
-        competitors = [c for c in competitors if c.metadata.get("name") != current_company]
+        raw_comp = vectordb.similarity_search(current_company, k=16)
+        competitors = [
+            d for d in raw_comp
+            if d.metadata.get("kind") == "company"
+            and _norm(d.metadata.get("name", "")) != _norm(current_company)
+        ][:3]
+
 
         competitors_text = "\n\n".join(
             f"- {c.metadata.get('name')}\n{c.page_content[:500]}..."
