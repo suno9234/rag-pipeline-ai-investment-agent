@@ -31,7 +31,7 @@ NextUnicorn에서 모빌리티 분야 스타트업을 탐색하고, 시장성·�
 |--------------|-------------------------------------------|
 | Framework    | **LangGraph**, LangChain                  |
 | LLM          | GPT-4o-mini (OpenAI API)                  |
-| Embedding model | GPT-4o-mini (OpenAI API)                  |
+| Embedding model | jhgan/ko-sroberta-multitask (HuggingFace)                 |
 | VDB | **Chroma**                   |
 | Crawling     | **Playwright** (NextUnicorn 크롤러)        |
 
@@ -43,6 +43,15 @@ NextUnicorn에서 모빌리티 분야 스타트업을 탐색하고, 시장성·�
 - **competitor_analysis_agent** : 경쟁사 Top-3 검색 → 비교 분석 보고서 생성  
 - **investment_decision_agent** : 투자 여부(True/False) 판단 / (창업자 역량, 시장성, 제품력, 경쟁력, 실적, 투자 조건, 리스크)
 - **report_writer_agent** : 투자 요약 보고서 생성
+
+## State
+List[str]: 선정 기업 10개 기업명 목록 (분석 완료 시 pop)
+str: 현재 기업명
+List[str]: 현재 기업의 태깅 목록
+str: 시장성 조사 내용
+str: 경쟁사 분석 내용
+bool: 보고서 작성 여부 (최소 1개 이상 보고서 생성 시 True)
+bool: 투자 여부 판단 결과 (True/False)
 
 ## Architecture
 <img width="343" height="735" alt="image" src="https://github.com/user-attachments/assets/4581dffd-1db4-4799-9b8c-1e38760a1699" />
