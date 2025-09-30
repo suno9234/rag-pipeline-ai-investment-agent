@@ -54,6 +54,11 @@ NextUnicorn에서 모빌리티 분야 스타트업을 탐색하고, 시장성·�
 - bool: 보고서 작성 여부 (최소 1개 이상 보고서 생성 시 True)
 - bool: 투자 여부 판단 결과 ( True / False )
 
+## RAG Metadata
+
+- name: 기업명
+- kind: 기업 분석/산업 분석 구분
+
 ## Architecture
 <img width="343" height="735" alt="image" src="https://github.com/user-attachments/assets/4581dffd-1db4-4799-9b8c-1e38760a1699" />
 
