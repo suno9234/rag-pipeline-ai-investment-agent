@@ -1,5 +1,6 @@
 from langgraph.graph import END, StateGraph
 from state import State
+from config.chroma import get_vector_store
 
 # === Agent import ===
 from agents.startup_search_agent import startup_search_agent
@@ -17,6 +18,21 @@ def resume_analysis(state: State) -> str:
     if state["selected_companies"]:  # 아직 분석할 기업 남음
         current = state["selected_companies"].pop(0)
         state["current_company"] = current
+
+        # VDB에서 현재 기업명으로 검색 → 태그 가져오기
+        vectordb = get_vector_store()
+        results = vectordb.similarity_search(
+            query=current,  # 기업명 기준 검색
+            k=1,           # 기업은 유일하니까 1개만 가져오기
+            filter={"name": current, "type": "company"}  # 메타데이터 조건
+        )
+
+        if results:
+            tags = results[0].metadata.get("tags", [])
+            state["current_tags"] = tags
+        else:
+            state["current_tags"] = []
+            
         return "market_eval"
     else:
         if state["report_written"]:  # 보고서 하나라도 있음 → 종료
