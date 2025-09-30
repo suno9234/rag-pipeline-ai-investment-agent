@@ -5,6 +5,7 @@ import json
 import re
 import os
 import traceback
+from state import State
 
 # ── 1) 크롤링 툴 ────────────────────────────────────────────────────────────────
 from tools.nextunicorn import (
@@ -13,7 +14,7 @@ from tools.nextunicorn import (
 )
 
 # ── 2) 벡터 스토어 / 저장 레이어 ─────────────────────────────────────────────
-from config.chroma import get_company_store
+from config.chroma import get_vector_store
 from repositories.chroma_repo import (
     find_company_exact_or_similar,
     upsert_company_profile,  # repo 내부에서 tags(list)->" | " 문자열로 변환되어야 함
@@ -43,16 +44,16 @@ _COMBINED_PROMPT = ChatPromptTemplate.from_messages(
             '    "news": "...",\n'
             '    "info": "...",\n'
             '    "company": "..."\n'
+            '    "tags": "태그1 | 태그2 | 태그3"\n'
             "  }},\n"
-            '  "tags": ["태그1","태그2","태그3"]\n'
             "}}\n\n"
             "[정리 규칙]\n"
-            "1) cleaned 7키는 항상 포함.\n"
+            "1) cleaned 8키는 항상 포함.\n"
             "2) 해시태그/URL/광고·이벤트/내비게이션 제거, 중복 제거, 3+개행→1, 간단 맞춤법 보정.\n"
             "3) 각 섹션 최대 800자, 과장은 줄이고 사실 위주. 근거 없으면 빈 문자열(\"\").\n"
             "4) funding은 문서 어디에 있어도(소개/뉴스 등) 시리즈/라운드/누적 투자/투자 금액/투자자 신호를 모아 요약.\n\n"
             "[태그 규칙]\n"
-            "한국어 2~4어절, 최대 3개. 핵심 비즈니스/가치/도메인 드러내기.\n\n"
+            "tags는 한국어 2~4어절, 최대 3개. ' | ' 구분자로 연결.\n\n"
             "[출력 형식]\n"
             "위 JSON만 출력(코드펜스 금지).",
         ),
@@ -63,8 +64,8 @@ _COMBINED_PROMPT = ChatPromptTemplate.from_messages(
     ]
 )
 
-# ── 4) 내부 전용 상태 타입 (이름 변경) ─────────────────────────────────────────
-class StartupSearchLocalState(TypedDict, total=False):
+# ── 4) 상태 타입 ──────────────────────────────────────────────────────────────
+class State(TypedDict, total=False):
     input_text: str
     limit: int
     headless: bool
@@ -166,7 +167,7 @@ def _clean_and_tag_via_llm(
         )
 
 # ── 7) 메인 에이전트 ──────────────────────────────────────────────────────────
-def startup_agent(state: State) -> State:
+def startup_search_agent(state: State) -> State:
     # 1) 입력파싱
     limit: int = state.get("limit") or _parse_limit_from_text(
         state.get("input_text"), default=2
@@ -200,7 +201,7 @@ def startup_agent(state: State) -> State:
     pending: List[Dict[str, Any]] = []
     try:
         _log(emit_raw, "[chroma] START: get_company_store()")
-        vectordb = get_company_store()
+        vectordb = get_vector_store()
         try:
             col_obj = getattr(vectordb, "_collection", None)
             _log(emit_raw, "[chroma] collection object exists =", bool(col_obj))
@@ -290,7 +291,7 @@ def startup_agent(state: State) -> State:
                 print(json.dumps({"chroma_created": created, "chroma_skipped": []},
                                  ensure_ascii=False, indent=2))
                 try:
-                    col = get_company_store()._collection
+                    col = get_vector_store()._collection
                     cnt = col.count()
                     print("[chroma] companies.count =", cnt)
                 except Exception as e:
@@ -311,12 +312,3 @@ def startup_agent(state: State) -> State:
         "details": details,
         "errors": errors,
     }
-
-# ── 8) 단독 실행 ──────────────────────────────────────────────────────────────
-if __name__ == "__main__":
-    s: State = {
-        "input_text": "NextUnicorn에서 스타트업 2개 알려줘",
-        "headless": True,
-        "emit_raw": True,
-    }
-    s = startup_agent(s)
