@@ -10,7 +10,7 @@ sys.path.append(str(project_root))
 # 외부 모듈
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from config.chroma import get_vector_store
-from agents.industry_search import run_search, get_default_config
+from tools.industry_search_tool import run_search, get_default_config
 
 DOCS_DIR = project_root / "docs"
 DOCS_DIR.mkdir(exist_ok=True)

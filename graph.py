@@ -4,7 +4,7 @@ from config.chroma import get_vector_store
 
 # === Agent import ===
 from agents.startup_search_agent import startup_search_agent
-from agents.industry_search_agent import industry_search_agent
+from agents.industry_search import industry_search_agent
 from agents.market_eval_agent import market_eval_agent
 from agents.competitor_analysis_agent import competitor_analysis_agent
 from agents.investment_decision_agent import investment_decision_agent
