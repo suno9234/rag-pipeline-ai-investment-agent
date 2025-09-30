@@ -63,8 +63,8 @@ _COMBINED_PROMPT = ChatPromptTemplate.from_messages(
     ]
 )
 
-# ── 4) 상태 타입 ──────────────────────────────────────────────────────────────
-class State(TypedDict, total=False):
+# ── 4) 내부 전용 상태 타입 (이름 변경) ─────────────────────────────────────────
+class StartupSearchLocalState(TypedDict, total=False):
     input_text: str
     limit: int
     headless: bool
