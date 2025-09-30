@@ -23,20 +23,18 @@ def _chroma_exists_by_tag(tag: str) -> bool:
     try:
         vdb = get_vector_store()
         col = vdb._collection  # langchain_chroma 내부 chromadb collection
-        res = col.get(where={"tag": tag}, limit=1)
+        res = col.get(where={"kind": "industry"}, limit=1)
         return bool(res and res.get("ids"))
     except Exception:
         return False
 
-def _chroma_insert_texts(texts: List[str], tag: str, source: str):
+def _chroma_insert_texts(texts: List[str]):
     """
     메타데이터:
-      - data_type: "산업"
-      - tag: 그룹명(단일)
-      - source: 저장된 md 파일명
+      - kind: "industry"
     """
     vdb = get_vector_store()
-    metas = [{"data_type": "산업", "tag": tag, "source": source} for _ in texts]
+    metas = [{"kind": "industry"} for _ in texts]
     vdb.add_texts(texts=texts, metadatas=metas)
 
 # ─────────────────────────────────────────────────────────────
@@ -83,12 +81,12 @@ def industry_embedding(
 
     - industry / groups / synonyms 는 search 모듈의 하드코딩 값을 사용
       → get_default_config()로 읽어온다.
-    - VDB(Chroma)에 tag=group 이 이미 있으면 해당 그룹 임베딩 PASS
+    - VDB(Chroma)에 kind="industry" 가 이미 있으면 해당 그룹 임베딩 PASS
     - 없으면:
         (1) 검색 실행 → docs/{industry}_search_results.json 저장
         (2) 결과를 MD로 합치고 저장
         (3) 청크 후 Chroma에 add_texts(texts, metadatas=...)로 적재
-          * 메타데이터: data_type="산업", tag="<group>", source="<md파일명>"
+          * 메타데이터: kind="industry"
     - 반환: 입력 state 그대로 (노드 내부용 정보는 state에 넣지 않음)
     """
     industry, groups, _syns = get_default_config()
@@ -98,7 +96,7 @@ def industry_embedding(
     to_process = []
     for g in groups:
         if not force and _chroma_exists_by_tag(g):
-            print(f"⏭️  [SKIP] '{g}' → VDB(tag={g})에 이미 존재")
+            print(f"⏭️  [SKIP] '{g}' → VDB(kind=industry)에 이미 존재")
             continue
         to_process.append(g)
 
@@ -134,8 +132,8 @@ def industry_embedding(
             print(f"⚠️  [{g}] 청크 생성 실패(빈 문서). 건너뜁니다.")
             continue
 
-        print(f"🧩 [{g}] 청크 {len(chunks)}개 → VDB 적재 (tag={g}, source={md_path.name})")
-        _chroma_insert_texts(chunks, tag=g, source=md_path.name)
+        print(f"🧩 [{g}] 청크 {len(chunks)}개 → VDB 적재 (kind=industry)")
+        _chroma_insert_texts(chunks)
 
     print("🎉 임베딩 파이프라인 완료")
     return state
