@@ -24,11 +24,13 @@ def resume_analysis(state: State) -> str:
         results = vectordb.similarity_search(
             query=current,  # 기업명 기준 검색
             k=1,           # 기업은 유일하니까 1개만 가져오기
-            filter={"name": current, "type": "company"}  # 메타데이터 조건
+            filter={"name": current, "kind": "company"}  # 메타데이터 조건
         )
 
         if results:
-            tags = results[0].metadata.get("tags", [])
+            # ✅ tags는 문자열이므로 split 처리
+            tags_str = results[0].metadata.get("tags", "")
+            tags = [t.strip() for t in tags_str.split("|") if t.strip()]
             state["current_tags"] = tags
         else:
             state["current_tags"] = []
