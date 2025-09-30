@@ -229,14 +229,43 @@ def startup_search_agent(state: State) -> State:
                         {"chroma_created": [], "chroma_skipped": [{"name": name, "id": found_id, "reason": "exists"}]},
                         ensure_ascii=False, indent=2
                     ))
-                return {
+                try:
+                    vectordb = get_vector_store()
+                    chosen: List[str] = []
+
+                    # 이번 실행에서 생성한 기업 우선
+                    seen = set()
+                    for nm in created_names:
+                        if nm and nm not in seen:
+                            chosen.append(nm); seen.add(nm)
+                            if len(chosen) >= 10:
+                                break
+
+                    # 10개가 안 되면 DB에서 샘플 보충
+                    if len(chosen) < 10:
+                        add = _sample_existing_companies(vectordb, n=10 - len(chosen))
+                        for nm in add:
+                            if nm and nm not in seen:
+                                chosen.append(nm); seen.add(nm)
+                                if len(chosen) >= 10:
+                                    break
+
+                    # state에 세팅 (기존 값이 있으면 덮어쓰기)
+                    state["selected_companies"] = chosen
+                except Exception as e:
+                    errors.append(f"[postselect] {e}")
+                    _log(emit_raw, "[postselect] ERROR:", e)
+                    traceback.print_exc()    
+
+                # 5) 반환
+                state.update({
                     "limit": limit,
                     "headless": headless,
                     "emit_raw": emit_raw,
                     "items": items,
-                    "details": details,  # 상세는 아직 안 받았으므로 빈 배열일 수 있음
+                    "details": details,
                     "errors": errors,
-                }
+                })
 
             pending.append({"title": name, "url": url})
 
@@ -325,15 +354,18 @@ def startup_search_agent(state: State) -> State:
         errors.append(f"[postselect] {e}")
         _log(emit_raw, "[postselect] ERROR:", e)
         traceback.print_exc()    
+
     # 5) 반환
-    return {
+    state.update({
         "limit": limit,
         "headless": headless,
         "emit_raw": emit_raw,
         "items": items,
         "details": details,
         "errors": errors,
-    }
+    })
+
+    return state
 
 # agents/startup_search_agent.py 내부, 유틸 아래에 추가
 def _sample_existing_companies(vectordb, n: int = 10) -> List[str]:
