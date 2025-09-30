@@ -3,6 +3,7 @@ from graph import investment_app
 
 if __name__ == "__main__":
     initial_state: State = {
+        "input_text":"NextUnicorn에서 스타트업 20개 알려줘",
         "selected_companies": [],
         "current_company": None,
         "current_tags": [],

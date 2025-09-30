@@ -5,13 +5,19 @@ import json
 import re
 import os
 import random
+import time
 import traceback
 from state import State
 
+# ── 0) 프린트 로거 ────────────────────────────────────────────────────────────
+def _log(*args):
+    msg = " ".join(str(a) for a in args)
+    print(f"[DEBUG] {msg}")
+
 # ── 1) 크롤링 툴 ────────────────────────────────────────────────────────────────
 from tools.nextunicorn import (
-    nextunicorn_list,  # ✅ 리스트만
-    nextunicorn_company_details_batch,  # ✅ 필요 URL만 상세
+    nextunicorn_list,                    # ✅ 리스트만
+    nextunicorn_company_details_batch,   # ✅ 필요 URL만 상세
 )
 
 # ── 2) 벡터 스토어 / 저장 레이어 ─────────────────────────────────────────────
@@ -26,13 +32,6 @@ from langchain_openai import ChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate
 
 # 환경변수 OPENAI_API_KEY 필요
-_llm = ChatOpenAI(model="gpt-4o-mini", temperature=0.2)
-
-# 한 번에 처리: cleaned 섹션 + tags 생성 (tags는 상위 레벨 배열로 통일)
-# ── 3) LLM (섹션 정리 + 태그 동시 생성)
-from langchain_openai import ChatOpenAI
-from langchain_core.prompts import ChatPromptTemplate
-
 _llm = ChatOpenAI(model="gpt-4o-mini", temperature=0.2)
 
 _COMBINED_PROMPT = ChatPromptTemplate.from_messages([
@@ -79,7 +78,6 @@ def _parse_limit_from_text(text: Optional[str], default: int = 2) -> int:
     v = int(m.group(1))
     return max(1, v)
 
-
 def _normalize_all_tab(url: Optional[str]) -> str:
     if not url:
         return ""
@@ -88,37 +86,29 @@ def _normalize_all_tab(url: Optional[str]) -> str:
     sep = "&" if "?" in url else "?"
     return f"{url}{sep}tab=all"
 
-
 def _local_tidy(s: str) -> str:
     """LLM 실패 대비 로컬 정리기(최소 방어)."""
     if not s:
         return ""
     s = re.sub(r"https?://\S+", " ", s)  # URL 제거
-    s = re.sub(r"#\S+", " ", s)  # 해시태그 제거
-    s = re.sub(r"\s{2,}", " ", s)  # 다중 공백 1개로
-    s = re.sub(r"\n{3,}", "\n", s)  # 3개 이상 개행 1개로
+    s = re.sub(r"#\S+", " ", s)          # 해시태그 제거
+    s = re.sub(r"\s{2,}", " ", s)        # 다중 공백 1개로
+    s = re.sub(r"\n{3,}", "\n", s)       # 3개 이상 개행 1개로
     return s.strip()[:1000]
-
-
-def _log(emit: bool, *args):
-    if emit:
-        print(*args)
-
 
 # ── 6) LLM: 정리+태깅 통합 호출 ──────────────────────────────────────────────
 _JSON_FENCE = re.compile(r"```(?:json)?\s*(\{.*?\})\s*```", re.S)
-
 
 def _clean_and_tag_via_llm(
     name: str,
     raw_text: str,
     hint: str = "",
     *,
-    emit: bool = False,
+    emit: bool = True,  # 기본 True로 두고 항상 디버깅 출력
 ) -> Tuple[Dict[str, str], List[str]]:
     import json as _json
 
-    _log(emit, "[llm] combined: invoke start; raw_text_len:", len(raw_text))
+    _log("[LLM] combined: invoke start; raw_text_len:", len(raw_text), "name:", name)
     try:
         msgs = _COMBINED_PROMPT.format_messages(
             name=name,
@@ -126,9 +116,7 @@ def _clean_and_tag_via_llm(
             raw_text=raw_text,
         )
         out = _llm.invoke(msgs).content or ""
-        _log(
-            emit, "[llm] combined: raw output:", (out[:240].replace("\n", " ") + " ...")
-        )
+        _log("[LLM] combined: raw output head:", (out[:200].replace("\n", " ") + " ..."))
 
         # 코드펜스에 감싸오는 경우 대비
         m = _JSON_FENCE.search(out)
@@ -155,7 +143,6 @@ def _clean_and_tag_via_llm(
                 if isinstance(t, str) and t.strip():
                     tags.append(t.strip())
         else:
-            # cleaned 내부에 "tags": "태그1 | 태그2 | 태그3" 같은 문자열이 올 수도 있음
             maybe_str = cleaned_in.get("tags")
             if isinstance(maybe_str, str) and maybe_str.strip():
                 for t in maybe_str.split("|"):
@@ -164,17 +151,13 @@ def _clean_and_tag_via_llm(
                         tags.append(tt)
                 tags = tags[:3]
 
-        _log(
-            emit,
-            "[llm] combined: done; lens:",
-            {k: len(cleaned.get(k, "")) for k in cleaned},
-            "tags:",
-            tags,
-        )
+        _log("[LLM] combined: done; lens:",
+             {k: len(cleaned.get(k, "")) for k in cleaned},
+             "tags:", tags)
         return cleaned, tags
 
     except Exception as e:
-        _log(emit, "[llm] combined: ERROR:", e)
+        _log("[LLM][ERROR]", e)
         traceback.print_exc()
         # 폴백: 전부 빈칸
         return (
@@ -193,7 +176,6 @@ def _clean_and_tag_via_llm(
             [],
         )
 
-
 # ── 7) 메인 에이전트 ──────────────────────────────────────────────────────────
 def startup_search_agent(state: State) -> State:
     """
@@ -206,80 +188,83 @@ def startup_search_agent(state: State) -> State:
        - 없으면 기존 VDB에서 랜덤 10개 샘플링
     4) state 에 변경분만 덮어써서 반환
     """
-    # 0) 입력 파싱 및 로깅 설정
+    print("\n===== [START] startup_search_agent =====")
+    t0 = time.time()
+
+    # 0) 입력 파싱 및 기본 상태
     limit: int = state.get("limit") or _parse_limit_from_text(
         state.get("input_text"), default=2
     )
     headless: bool = state.get("headless", True)
     emit_raw: bool = state.get("emit_raw", False)
 
-    _log(emit_raw, "[boot] input_text=", state.get("input_text"))
-    _log(emit_raw, "[boot] limit=", limit, "headless=", headless)
-    _log(emit_raw, "[env]  VDB_PATH=", os.environ.get("VDB_PATH"))
-    _log(emit_raw, "[env]  CWD=", os.getcwd())
+    _log("[BOOT] input_text=", state.get("input_text"))
+    _log("[BOOT] limit=", limit, "headless=", headless)
+    _log("[ENV ] VDB_PATH=", os.environ.get("VDB_PATH"))
+    _log("[ENV ] CWD=", os.getcwd())
 
     items: List[Dict[str, Any]] = []
     details: List[Dict[str, Any]] = []
     errors: List[str] = list(state.get("errors", []))
-    created_names: List[str] = []  # ← 업서트 성공한 회사명 모음
+    created_names: List[str] = []
 
-    # 1) (변경) 리스트만 먼저 수집
+    # 1) 리스트 수집
     try:
-        _log(emit_raw, "[crawl] list: nextunicorn_list start")
+        _log("[CRAWL] nextunicorn_list: START")
+        t_list0 = time.time()
         items = __import__("asyncio").run(
             nextunicorn_list(limit=limit, headless=headless)
         )
-        _log(emit_raw, "[crawl] list: done; items=", len(items))
+        t_list1 = time.time()
+        _log("[CRAWL] nextunicorn_list: DONE items=", len(items),
+             "elapsed=", f"{t_list1 - t_list0:.3f}s")
     except Exception as e:
         errors.append(str(e))
-        _log(emit_raw, "[crawl] list ERROR:", e)
+        _log("[CRAWL][ERROR]", e)
         traceback.print_exc()
 
     if emit_raw:
+        print("[CRAWL] items dump:")
         print(json.dumps({"items": items, "errors": errors}, ensure_ascii=False, indent=2))
 
-    # 2) 크로마: 존재여부 먼저 검사 → 존재하면 즉시 종료(break)
+    # 2) 크로마 존재 여부 검사
     pending: List[Dict[str, Any]] = []
     vectordb = None
     try:
+        _log("[CHROMA] get_vector_store: START")
         vectordb = get_vector_store()
+        _log("[CHROMA] get_vector_store: DONE")
         try:
             col_obj = getattr(vectordb, "_collection", None)
-            _log(emit_raw, "[chroma] collection object exists =", bool(col_obj))
+            _log("[CHROMA] collection object exists =", bool(col_obj))
         except Exception:
             pass
 
         for idx, it in enumerate(items):
             name = (it.get("title") or "").strip()
             url = it.get("url") or ""
-            _log(emit_raw, f"[loop:{idx}] name={name} url={url}")
+            _log(f"[CHROMA][LOOP {idx}] name={name} url={url}")
 
             if not name:
-                _log(emit_raw, f"[loop:{idx}] skip: empty name")
+                _log(f"[CHROMA][LOOP {idx}] SKIP empty name")
                 continue
 
-            _log(emit_raw, f"[loop:{idx}] find_company_exact_or_similar → start")
+            _log(f"[CHROMA][LOOP {idx}] find_company_exact_or_similar: START")
             found_id, _ = find_company_exact_or_similar(
                 vectordb, company_name=name, k=3, score_threshold=0.18
             )
-            _log(emit_raw, f"[loop:{idx}] find_company_exact_or_similar → found_id={found_id}")
+            _log(f"[CHROMA][LOOP {idx}] find_company_exact_or_similar: found_id={found_id}")
 
             if found_id:
-                # 정책: 하나라도 이미 있으면 즉시 종료(최신 우선)
-                _log(emit_raw, f"[loop:{idx}] exists → break (최신 우선 정책)")
+                _log(f"[CHROMA][LOOP {idx}] EXISTS → EARLY EXIT (최신 우선 정책)")
                 if emit_raw:
-                    print(
-                        json.dumps(
-                            {
-                                "chroma_created": [],
-                                "chroma_skipped": [
-                                    {"name": name, "id": found_id, "reason": "exists"}
-                                ],
-                            },
-                            ensure_ascii=False,
-                            indent=2,
-                        )
-                    )
+                    print(json.dumps(
+                        {
+                            "chroma_created": [],
+                            "chroma_skipped": [{"name": name, "id": found_id, "reason": "exists"}],
+                        },
+                        ensure_ascii=False, indent=2
+                    ))
                 new_state = dict(state)
                 new_state.update(
                     {
@@ -291,54 +276,52 @@ def startup_search_agent(state: State) -> State:
                         "errors": errors,
                     }
                 )
+                print(f"===== [END] startup_search_agent (early-exit, total {time.time()-t0:.3f}s) =====\n")
                 return new_state
 
-            # 존재하지 않으면 상세 수집 대상에 추가
             pending.append({"title": name, "url": url})
+
+        _log("[CHROMA] pending for details =", len(pending))
 
     except Exception as e:
         errors.append(f"[chroma] {e}")
-        _log(emit_raw, "[chroma] BLOCK ERROR:", e)
+        _log("[CHROMA][ERROR]", e)
         traceback.print_exc()
 
     # 3) (존재하지 않는 것만) 상세 본문 수집 → LLM 정리/태깅 → 업서트
     try:
         if not pending:
-            _log(emit_raw, "[detail] pending=0 → nothing to do")
+            _log("[DETAIL] pending=0 → nothing to do")
         else:
             urls = [_normalize_all_tab(p["url"]) for p in pending if p.get("url")]
-            _log(emit_raw, f"[detail] batch fetch start; urls={len(urls)}")
+            _log("[DETAIL] batch fetch: START urls=", len(urls))
+            t_det0 = time.time()
             details = __import__("asyncio").run(
                 nextunicorn_company_details_batch(urls, headless=headless)
             )
-            _log(emit_raw, "[detail] batch fetch done; details=", len(details))
+            t_det1 = time.time()
+            _log("[DETAIL] batch fetch: DONE details=", len(details),
+                 "elapsed=", f"{t_det1 - t_det0:.3f}s")
 
             # URL → full_text 매핑
-            url2text = {
-                d["url"].replace("?tab=all", ""): d.get("full_text", "") for d in details
-            }
+            url2text = {d["url"].replace("?tab=all", ""): d.get("full_text", "") for d in details}
 
             created = []
+            t_llm0 = time.time()
             for idx, it in enumerate(pending):
                 name = it["title"]
                 url = it["url"]
-                raw_text = url2text.get(url, "") or url2text.get(
-                    _normalize_all_tab(url), ""
-                )
+                raw_text = url2text.get(url, "") or url2text.get(_normalize_all_tab(url), "")
                 if not raw_text:
                     raw_text = "\n".join(filter(None, [name, url]))
 
-                _log(
-                    emit_raw,
-                    f"[upsert:{idx}] LLM clean/tag start; name={name} raw_len={len(raw_text)}",
-                )
+                _log(f"[UPSERT {idx}] LLM clean/tag: START name={name} raw_len={len(raw_text)}")
                 cleaned, tags = _clean_and_tag_via_llm(
-                    name=name, raw_text=raw_text, hint="", emit=emit_raw
+                    name=name, raw_text=raw_text, hint="", emit=True
                 )
+                _log(f"[UPSERT {idx}] LLM clean/tag: DONE tags={tags}")
 
-                _log(
-                    emit_raw, f"[upsert:{idx}] upsert_company_profile start; tags={tags}"
-                )
+                _log(f"[UPSERT {idx}] upsert_company_profile: START")
                 doc_id = upsert_company_profile(
                     vectordb,
                     company_name=name,
@@ -347,44 +330,40 @@ def startup_search_agent(state: State) -> State:
                     overwrite=False,
                     tags=tags,
                 )
-                _log(
-                    emit_raw,
-                    f"[upsert:{idx}] upsert_company_profile done; doc_id={doc_id}",
-                )
+                _log(f"[UPSERT {idx}] upsert_company_profile: DONE doc_id={doc_id}")
                 created.append({"name": name, "id": doc_id, "tags": tags})
+
+            t_llm1 = time.time()
+            _log("[UPSERT] TOTAL LLM+UPSERT elapsed=", f"{t_llm1 - t_llm0:.3f}s")
 
             created_names = [c["name"] for c in created if "name" in c]
 
             if emit_raw:
-                print(
-                    json.dumps(
-                        {"chroma_created": created, "chroma_skipped": []},
-                        ensure_ascii=False,
-                        indent=2,
-                    )
-                )
+                print("[UPSERT] dump:")
+                print(json.dumps({"chroma_created": created, "chroma_skipped": []}, ensure_ascii=False, indent=2))
                 try:
                     col = get_vector_store()._collection
                     cnt = col.count()
-                    print("[chroma] investment_ai.count =", cnt)
+                    print(f"[CHROMA] investment_ai.count={cnt}")
                 except Exception as e:
-                    print("[chroma] count error:", e)
+                    print("[CHROMA] count error:", e)
                     traceback.print_exc()
 
     except Exception as e:
         errors.append(f"[detail] {e}")
-        _log(emit_raw, "[detail] ERROR:", e)
+        _log("[DETAIL][ERROR]", e)
         traceback.print_exc()
 
     # 4) selected_companies 채우기 (업서트 성공분 or 기존 랜덤)
     try:
-        chosen: List[str] = []
         if created_names:
             chosen = created_names[:10]
+            _log("[SELECT] use created_names =", len(chosen))
         else:
             if vectordb is None:
                 vectordb = get_vector_store()
             chosen = _sample_existing_companies(vectordb, n=10)
+            _log("[SELECT] use sampled existing companies =", len(chosen))
 
         state.setdefault("selected_companies", [])
         state["selected_companies"] = chosen
@@ -394,7 +373,7 @@ def startup_search_agent(state: State) -> State:
         state.setdefault("investment_decision", None)
     except Exception as e:
         errors.append(f"[postselect] {e}")
-        _log(emit_raw, "[postselect] ERROR:", e)
+        _log("[POSTSELECT][ERROR]", e)
         traceback.print_exc()
 
     # 5) 반환: 기존 state 복사 후 변경분 덮어쓰기
@@ -409,8 +388,11 @@ def startup_search_agent(state: State) -> State:
             "errors": errors,
         }
     )
-    return new_state
 
+    total = time.time() - t0
+    _log("[SUMMARY] items=", len(items), "details=", len(details), "errors=", len(errors))
+    print(f"===== [END] startup_search_agent (total {total:.3f}s) =====\n")
+    return new_state
 
 # agents/startup_search_agent.py 내부, 유틸 아래에 추가
 def _sample_existing_companies(vectordb, n: int = 10) -> List[str]:
@@ -429,10 +411,7 @@ def _sample_existing_companies(vectordb, n: int = 10) -> List[str]:
             return names
 
         # kind=company 만 집계 (최대 1000개까지 가져와서 샘플)
-        # 대부분 규모에서는 이게 간단하고 빠름. 규모 커지면 offset 랜덤 전략 유지.
-        res = col.get(
-            where={"kind": "company"}, include=["metadatas", "ids"], limit=1000
-        )
+        res = col.get(where={"kind": "company"}, include=["metadatas", "ids"], limit=1000)
         metas = res.get("metadatas") or []
         ids = res.get("ids") or []
         pool = []
@@ -466,7 +445,6 @@ def _sample_existing_companies(vectordb, n: int = 10) -> List[str]:
         except Exception:
             return names
 
-
 # ── 8) 단독 실행 ──────────────────────────────────────────────────────────────
 if __name__ == "__main__":
     s: State = {
@@ -474,4 +452,10 @@ if __name__ == "__main__":
         "headless": True,
         "emit_raw": True,
     }
-    s = startup_search_agent(s)
+    print("[MAIN] invoke startup_search_agent")
+    try:
+        s = startup_search_agent(s)
+        print("[MAIN] done")
+    except Exception as e:
+        print("[MAIN][ERROR]", e)
+        traceback.print_exc()
