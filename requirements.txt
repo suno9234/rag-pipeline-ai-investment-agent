@@ -5,6 +5,7 @@ langgraph>=0.1.0
 langchain-community>=0.2.0
 
 # === OpenAI API (LLM/Embedding) ===
+langchain-openai
 openai>=1.30.0
 
 # === VectorDB / Embedding Search ===
@@ -27,3 +28,14 @@ uvicorn[standard]>=0.30.0
 
 # === import ===
 python-dotenv>=1.0.1
+
+
+# === web crawling ===
+playwright==1.47.0
+beautifulsoup4==4.12.3
+tldextract==5.1.2
+python-dateutil==2.9.0.post0
+tenacity==9.0.0
+
+# pip install playwright 
+# playwright install
