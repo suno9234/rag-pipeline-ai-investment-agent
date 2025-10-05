@@ -6,7 +6,7 @@ from langchain_huggingface import HuggingFaceEmbeddings
 load_dotenv()
 
 VDB_PATH = os.getenv("VDB_PATH", "./data/vector_store")
-MODEL_NAME = os.getenv("EMBED_MODEL", "jhgan/ko-sroberta-multitask")  # 한글 임베딩
+MODEL_NAME = os.getenv("EMBED_MODEL", "BAAI/bge-m3")
 
 def get_embeddings():
     """
