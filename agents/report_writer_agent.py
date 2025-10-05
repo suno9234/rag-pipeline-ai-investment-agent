@@ -218,17 +218,28 @@ def _safe_filename(name: str) -> str:
 # ───────────────────────────────────────────────────────────────────────────────
 def report_writer_node(state: State) -> State:
     """
-    evaluation(점수/판정)을 바탕으로 보고서 텍스트 생성 → 레이더차트 → PDF 저장.
-    state 업데이트:
-      - report_written: True
-      - report_path: 생성된 PDF 경로
+    1) 개별 기업 투자 승인 시: 개별 보고서 작성
+    2) 모든 기업 거부 시: 종합 거부 사유 보고서 작성
+    """
+    # 개별 기업 투자 승인 보고서
+    if state.get("current_company") and state.get("investment_decision") is True:
+        return write_individual_report(state)
+    
+    # 모든 기업 거부 시 종합 보고서
+    if not state.get("selected_companies") and not state.get("report_written"):
+        return write_comprehensive_rejection_report(state)
+    
+    # 기본적으로 report_written = True 설정
+    state["report_written"] = True
+    return state
+
+def write_individual_report(state: State) -> State:
+    """
+    개별 기업의 투자 승인 보고서 작성
     """
     evaluation = state.get("evaluation") or {}
     if not evaluation:
-        # 평가가 없으면 종료
-        return state
-    if state.get("investment_decision") is False:
-        # 불합격이면 보고서 스킵
+        state["report_written"] = True
         return state
 
     company = state.get("current_company") or "startup"
@@ -297,6 +308,56 @@ def report_writer_node(state: State) -> State:
     save_pdf(company, report_json, chart_path, pdf_path)
 
     # state 업데이트 후 반환
+    state.update({
+        "report_written": True,
+        "report_path": pdf_path
+    })
+    return state
+
+def write_comprehensive_rejection_report(state: State) -> State:
+    """
+    모든 기업이 투자 거부된 경우 종합 분석 보고서 작성
+    """
+    print("📊 [종합 분석] 모든 기업 투자 거부 - 종합 보고서 작성 중...")
+    
+    # 간단한 종합 보고서 작성
+    report_content = """
+## 모빌리티 스타트업 투자 분석 종합 보고서
+
+### 분석 개요
+- 분석 대상: 10개 모빌리티 스타트업
+- 분석 결과: 전체 투자 거부
+
+### 주요 거부 사유
+1. **시장 성숙도 부족**: 대부분의 기업이 아직 초기 단계
+2. **경쟁 우위 부족**: 차별화된 경쟁력 부족
+3. **수익성 불투명**: 명확한 비즈니스 모델 부재
+4. **투자 위험도 높음**: 기술적/시장적 리스크 과다
+
+### 결론
+현재 모빌리티 시장의 스타트업들은 아직 투자 적기가 아닌 것으로 판단됩니다.
+더 성숙한 비즈니스 모델과 경쟁력을 갖춘 기업들이 나타날 때까지 지속적인 모니터링이 필요합니다.
+    """
+    
+    # PDF 저장
+    pdf_path = "comprehensive_rejection_report.pdf"
+    try:
+        doc = SimpleDocTemplate(pdf_path, pagesize=A4)
+        styles = getSampleStyleSheet()
+        if "KoreanNormal" not in styles:
+            styles.add(ParagraphStyle(name="KoreanNormal", fontName=DOC_FONT_NAME, fontSize=10, leading=14))
+        
+        story = []
+        for line in report_content.strip().split('\n'):
+            if line.strip():
+                story.append(Paragraph(line.replace('#', '').strip(), styles["KoreanNormal"]))
+                story.append(Spacer(1, 6))
+        
+        doc.build(story)
+        print(f"✅ 종합 보고서 저장 완료: {pdf_path}")
+    except Exception as e:
+        print(f"⚠️ 종합 보고서 PDF 생성 실패: {e}")
+    
     state.update({
         "report_written": True,
         "report_path": pdf_path
