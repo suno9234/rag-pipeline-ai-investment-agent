@@ -13,5 +13,5 @@ if __name__ == "__main__":
         "investment_decision": None,
     }
 
-    result = investment_app.invoke(initial_state)
+    result = investment_app.invoke(initial_state, config={"recursion_limit": 200})
     print("✅ 최종 실행 결과:", result)

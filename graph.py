@@ -104,6 +104,8 @@ def resume_analysis_node(state: State) -> State:
         state["current_tags"] = tags
     else:
         print("📋 [RESUME_ANALYSIS] 분석할 기업 없음")
+        state["current_company"] = None
+        state["current_tags"] = []
     
     print(f"✅ [RESUME_ANALYSIS] 완료")
     # state만 반환 (여기서 분기 라벨을 반환하면 안 됨)
