@@ -28,7 +28,7 @@ load_dotenv()
 # ───────────────────────────────────────────────────────────────────────────────
 # 폰트 설정 (ReportLab + Matplotlib)
 # ───────────────────────────────────────────────────────────────────────────────
-FONT_PATH = os.path.join(os.path.dirname(__file__), "NotoSansKR-VariableFont_wght.ttf")
+FONT_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "config", "NotoSansKR-VariableFont_wght.ttf")
 FONT_NAME = "NotoSansKR"
 DOC_FONT_NAME = "Helvetica"  # ReportLab 기본 폰트 fallback
 font_prop = None             # Matplotlib fallback
