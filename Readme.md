@@ -51,13 +51,13 @@ NextUnicorn에서 모빌리티 분야 스타트업을 탐색하고, 시장성·�
 
 ## Agents Workflow
 
-#### 1. **startup_search_agent** - 스타트업 발굴 및 데이터 수집
+#### 1. **startup_search_agent(RAG 활용)** - 스타트업 발굴 및 데이터 수집
 - **Step 1**: NextUnicorn 플랫폼에서 Playwright를 이용한 실시간 크롤링
 - **Step 2**: 수집된 기업 정보를 LLM에 전달하여 자동 태깅 및 정제
 - **Step 3**: 처리된 데이터를 Chroma VectorDB에 임베딩 및 저장
 - **Step 4**: 분석 대상 기업 10개 자동 선정
 
-#### 2. **industry_search_agent** - 산업 동향 데이터 수집
+#### 2. **industry_search_agent(RAG 활용)** - 산업 동향 데이터 수집
 - **Step 1**: 모빌리티 도메인별 검색 쿼리 자동 생성 (전기차, 자율주행, 전동킥보드 등)
 - **Step 2**: Tavily Search API를 통한 실시간 산업 동향 수집
 - **Step 3**: 수집된 산업 데이터를 청크 단위로 분할 후 VectorDB 저장
